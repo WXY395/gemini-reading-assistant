@@ -1,8 +1,0 @@
-[      51ms] TypeError: Cannot read properties of undefined (reading 'local')
-    at http://localhost:53704/utils/storage.js:41:22
-    at new Promise (<anonymous>)
-    at readFromStorage (http://localhost:53704/utils/storage.js:40:12)
-    at Object.getSettings (http://localhost:53704/utils/storage.js:58:26)
-    at loadSettings (http://localhost:53704/popup.js:30:25)
-    at HTMLDocument.<anonymous> (http://localhost:53704/popup.js:153:28)
-[      53ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:53704/favicon.ico:0
