@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Gemini Reading Assistant</title>
+    <!-- Popup 專用樣式 -->
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <!--
+      Gemini Reading Assistant - Popup
+      --------------------------------
+      這裡提供簡單的控制面板，占位並連結到 storage。
+      V1 僅提供開關類 UI，實際功能由 content script 解讀設定。
+    -->
+
+    <header class="gra-popup-header">
+      <div class="gra-popup-header__title">Gemini Reading Assistant</div>
+      <div class="gra-popup-header__subtitle">V1</div>
+    </header>
+
+    <main class="gra-popup-main">
+      <!-- 總開關 -->
+      <label class="gra-toggle">
+        <span class="gra-toggle__label">在此分頁啟用助手</span>
+        <input id="gra-toggle-enabled" type="checkbox" class="gra-toggle__input" />
+        <span class="gra-toggle__slider"></span>
+      </label>
+
+      <hr class="gra-popup-divider" />
+
+      <!-- 各模組獨立開關（僅設定占位） -->
+      <section class="gra-popup-section">
+        <div class="gra-popup-section__title">功能模組</div>
+
+        <label class="gra-toggle gra-toggle--sm">
+          <span class="gra-toggle__label">右側段落導航</span>
+          <input
+            id="gra-toggle-sidebar"
+            type="checkbox"
+            class="gra-toggle__input"
+          />
+          <span class="gra-toggle__slider"></span>
+        </label>
+
+        <label class="gra-toggle gra-toggle--sm">
+          <span class="gra-toggle__label">選字浮動工具列</span>
+          <input
+            id="gra-toggle-selection-toolbar"
+            type="checkbox"
+            class="gra-toggle__input"
+          />
+          <span class="gra-toggle__slider"></span>
+        </label>
+
+        <label class="gra-toggle gra-toggle--sm">
+          <span class="gra-toggle__label">引用暫存夾</span>
+          <input
+            id="gra-toggle-citation"
+            type="checkbox"
+            class="gra-toggle__input"
+          />
+          <span class="gra-toggle__slider"></span>
+        </label>
+
+        <label class="gra-toggle gra-toggle--sm">
+          <span class="gra-toggle__label">插入 Gemini 輸入框</span>
+          <input
+            id="gra-toggle-gemini-input"
+            type="checkbox"
+            class="gra-toggle__input"
+          />
+          <span class="gra-toggle__slider"></span>
+        </label>
+
+        <label class="gra-toggle gra-toggle--sm">
+          <span class="gra-toggle__label">本頁關鍵字搜尋</span>
+          <input
+            id="gra-toggle-page-search"
+            type="checkbox"
+            class="gra-toggle__input"
+          />
+          <span class="gra-toggle__slider"></span>
+        </label>
+
+        <button
+          id="gra-btn-open-search"
+          type="button"
+          class="gra-popup-btn gra-popup-btn--sm"
+          disabled
+        >
+          開啟搜尋列
+        </button>
+      </section>
+    </main>
+
+    <footer class="gra-popup-footer">
+      <span class="gra-popup-footer__hint">
+        設定僅儲存在本機，不會同步或上傳。
+      </span>
+    </footer>
+
+    <section class="gra-popup-section gra-popup-journal">
+      <div class="gra-popup-journal__header">
+        <span class="gra-popup-journal__title">對話保存</span>
+        <div class="gra-popup-journal__actions">
+          <button id="gra-btn-save-conversation" type="button" class="gra-popup-btn gra-popup-btn--sm">
+            立即保存
+          </button>
+          <button id="gra-btn-full-backfill" type="button" class="gra-popup-btn gra-popup-btn--sm">
+            完整補抓
+          </button>
+        </div>
+        <div class="gra-popup-journal__export">
+          <button id="gra-btn-export-md" type="button" class="gra-popup-btn gra-popup-btn--sm gra-popup-btn--secondary">
+            匯出 Markdown
+          </button>
+          <button id="gra-btn-export-txt" type="button" class="gra-popup-btn gra-popup-btn--sm gra-popup-btn--secondary">
+            匯出 TXT
+          </button>
+        </div>
+      </div>
+      <div id="gra-journal-status" class="gra-popup-journal__status">
+        <div class="gra-popup-journal__row">
+          <span class="gra-popup-journal__label">狀態</span>
+          <span id="gra-journal-status-text" class="gra-popup-journal__value">—</span>
+        </div>
+        <div class="gra-popup-journal__row">
+          <span class="gra-popup-journal__label">已保存</span>
+          <span id="gra-journal-saved-count" class="gra-popup-journal__value">—</span>
+        </div>
+        <div class="gra-popup-journal__row">
+          <span class="gra-popup-journal__label">Auto Save</span>
+          <span id="gra-auto-save-status" class="gra-popup-journal__value">—</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="gra-popup-section gra-popup-diagnostics">
+      <div class="gra-popup-diagnostics__header">
+        <span class="gra-popup-diagnostics__title">Diagnostics</span>
+        <button id="gra-btn-refresh-diagnostics" type="button" class="gra-popup-btn gra-popup-btn--sm">
+          重新偵測
+        </button>
+      </div>
+      <div id="gra-diagnostics-content" class="gra-popup-diagnostics__content">
+        <div class="gra-popup-diagnostics__row">
+          <span class="gra-popup-diagnostics__label">頁型</span>
+          <span id="gra-diag-page-type" class="gra-popup-diagnostics__value">—</span>
+        </div>
+        <div class="gra-popup-diagnostics__row">
+          <span class="gra-popup-diagnostics__label">Sidebar</span>
+          <span id="gra-diag-sidebar" class="gra-popup-diagnostics__value">—</span>
+        </div>
+        <div class="gra-popup-diagnostics__row">
+          <span class="gra-popup-diagnostics__label">SelectionToolbar</span>
+          <span id="gra-diag-toolbar" class="gra-popup-diagnostics__value">—</span>
+        </div>
+        <div class="gra-popup-diagnostics__row">
+          <span class="gra-popup-diagnostics__label">CitationPanel</span>
+          <span id="gra-diag-citation" class="gra-popup-diagnostics__value">—</span>
+        </div>
+        <div class="gra-popup-diagnostics__row">
+          <span class="gra-popup-diagnostics__label">Search UI</span>
+          <span id="gra-diag-search" class="gra-popup-diagnostics__value">—</span>
+        </div>
+        <div class="gra-popup-diagnostics__row">
+          <span class="gra-popup-diagnostics__label">Input</span>
+          <span id="gra-diag-input" class="gra-popup-diagnostics__value">—</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 先載入共用 storage 工具，再載入 popup 腳本 -->
+    <script src="utils/storage.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>
+

@@ -1,0 +1,278 @@
+/* Gemini Reading Assistant - Popup Styles
+ * ---------------------------------------
+ * 簡潔、易讀的控制面板樣式，只提供 V1 需要的基礎外觀。
+ */
+
+ :root {
+  color-scheme: light dark;
+}
+
+body {
+  margin: 0;
+  padding: 12px 14px;
+  width: 320px;
+  box-sizing: border-box;
+
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  font-size: 13px;
+
+  background: #0f172a;
+  color: #e5e7eb;
+}
+
+.gra-popup-header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 10px;
+}
+
+.gra-popup-header__title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.gra-popup-header__subtitle {
+  font-size: 11px;
+  color: #9ca3af;
+}
+
+.gra-popup-main {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.gra-popup-divider {
+  border: none;
+  border-top: 1px solid #1f2933;
+  margin: 8px 0;
+}
+
+.gra-popup-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.gra-popup-section__title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #9ca3af;
+}
+
+.gra-popup-footer {
+  margin-top: 8px;
+}
+
+.gra-popup-footer__hint {
+  display: block;
+  font-size: 10px;
+  color: #6b7280;
+}
+
+/* ---- Toggle Switch ------------------------------------------------------- */
+
+.gra-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.gra-toggle--sm {
+  font-size: 12px;
+}
+
+.gra-toggle__label {
+  flex: 1;
+}
+
+.gra-toggle__input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.gra-toggle__slider {
+  position: relative;
+  width: 34px;
+  height: 18px;
+  border-radius: 999px;
+  background: #374151;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.18s ease-out, box-shadow 0.18s ease-out;
+  box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.6);
+}
+
+.gra-toggle__slider::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: #e5e7eb;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.7);
+  transition: transform 0.18s ease-out;
+}
+
+.gra-toggle__input:checked + .gra-toggle__slider {
+  background: #22c55e;
+  box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.9);
+}
+
+.gra-toggle__input:checked + .gra-toggle__slider::before {
+  transform: translateX(16px);
+}
+
+/* ---- Popup Button ------------------------------------------------------- */
+
+.gra-popup-btn {
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  background: rgba(59, 130, 246, 0.2);
+  color: #93c5fd;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.gra-popup-btn:hover:not(:disabled) {
+  background: rgba(59, 130, 246, 0.3);
+}
+
+.gra-popup-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.gra-popup-btn--sm {
+  font-size: 11px;
+  padding: 4px 8px;
+  align-self: flex-start;
+}
+
+/* ---- Conversation Journal ------------------------------------------------ */
+
+.gra-popup-journal {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #1f2933;
+}
+
+.gra-popup-journal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.gra-popup-journal__actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.gra-popup-journal__export {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+
+.gra-popup-btn--secondary {
+  background: rgba(107, 114, 128, 0.25);
+  color: #9ca3af;
+}
+
+.gra-popup-btn--secondary:hover:not(:disabled) {
+  background: rgba(107, 114, 128, 0.35);
+}
+
+.gra-popup-journal__title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #9ca3af;
+}
+
+.gra-popup-journal__status {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.gra-popup-journal__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 10px;
+}
+
+.gra-popup-journal__label {
+  color: #6b7280;
+  flex-shrink: 0;
+}
+
+.gra-popup-journal__value {
+  color: #d1d5db;
+  text-align: right;
+  word-break: break-all;
+}
+
+/* ---- Diagnostics --------------------------------------------------------- */
+
+.gra-popup-diagnostics {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid #1f2933;
+}
+
+.gra-popup-diagnostics__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.gra-popup-diagnostics__title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #9ca3af;
+}
+
+.gra-popup-diagnostics__content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.gra-popup-diagnostics__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 10px;
+}
+
+.gra-popup-diagnostics__label {
+  color: #6b7280;
+  flex-shrink: 0;
+}
+
+.gra-popup-diagnostics__value {
+  color: #d1d5db;
+  text-align: right;
+  word-break: break-all;
+}
+
