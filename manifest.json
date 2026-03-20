@@ -19,6 +19,12 @@
   "host_permissions": [
     "https://gemini.google.com/*"
   ],
+  "web_accessible_resources": [
+    {
+      "resources": ["gra-inspect-bridge-page.js"],
+      "matches": ["https://gemini.google.com/*"]
+    }
+  ],
   "content_scripts": [
     {
       "matches": [

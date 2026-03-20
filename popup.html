@@ -100,6 +100,20 @@
       </span>
     </footer>
 
+    <section class="gra-popup-section gra-popup-cards" aria-label="知識卡片">
+      <div class="gra-popup-cards__header">
+        <span class="gra-popup-cards__title">知識卡片</span>
+      </div>
+      <input
+        id="gra-cards-search"
+        type="search"
+        class="gra-popup-cards__search"
+        placeholder="搜尋文字、備註、標籤…"
+        autocomplete="off"
+      />
+      <div id="gra-cards-list" class="gra-popup-cards__list"></div>
+    </section>
+
     <section class="gra-popup-section gra-popup-journal">
       <div class="gra-popup-journal__header">
         <span class="gra-popup-journal__title">對話保存</span>
@@ -134,6 +148,22 @@
           <span id="gra-auto-save-status" class="gra-popup-journal__value">—</span>
         </div>
       </div>
+    </section>
+
+    <section class="gra-popup-section gra-popup-data-io">
+      <div class="gra-popup-data-io__header">
+        <span class="gra-popup-data-io__title">資料匯出 / 匯入</span>
+      </div>
+      <div class="gra-popup-data-io__actions">
+        <button id="gra-btn-export-data" type="button" class="gra-popup-btn gra-popup-btn--sm">
+          匯出 JSON
+        </button>
+        <button id="gra-btn-import-data" type="button" class="gra-popup-btn gra-popup-btn--sm gra-popup-btn--secondary">
+          匯入 JSON
+        </button>
+        <input id="gra-input-import-file" type="file" accept=".json,application/json" hidden />
+      </div>
+      <div id="gra-data-io-status" class="gra-popup-data-io__status" aria-live="polite"></div>
     </section>
 
     <section class="gra-popup-section gra-popup-diagnostics">

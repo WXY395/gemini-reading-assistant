@@ -24,6 +24,10 @@
       btnFullBackfill: document.getElementById("gra-btn-full-backfill"),
       btnExportMd: document.getElementById("gra-btn-export-md"),
       btnExportTxt: document.getElementById("gra-btn-export-txt"),
+      btnExportData: document.getElementById("gra-btn-export-data"),
+      btnImportData: document.getElementById("gra-btn-import-data"),
+      inputImportFile: document.getElementById("gra-input-import-file"),
+      dataIoStatus: document.getElementById("gra-data-io-status"),
       journalStatusText: document.getElementById("gra-journal-status-text"),
       journalSavedCount: document.getElementById("gra-journal-saved-count"),
       autoSaveStatus: document.getElementById("gra-auto-save-status"),
@@ -32,8 +36,58 @@
       diagToolbar: document.getElementById("gra-diag-toolbar"),
       diagCitation: document.getElementById("gra-diag-citation"),
       diagSearch: document.getElementById("gra-diag-search"),
-      diagInput: document.getElementById("gra-diag-input")
+      diagInput: document.getElementById("gra-diag-input"),
+      cardsSearch: document.getElementById("gra-cards-search"),
+      cardsList: document.getElementById("gra-cards-list")
     };
+  }
+
+  /**
+   * 自 gra_quotes 讀取卡片並依搜尋框即時篩選（text / note / tags）。
+   */
+  async function renderKnowledgeCards(elements) {
+    const listEl = elements.cardsList;
+    const inputEl = elements.cardsSearch;
+    if (!listEl || !inputEl || typeof GRAStorage === "undefined" || !GRAStorage.getQuotes) {
+      return;
+    }
+    let all = [];
+    try {
+      all = await GRAStorage.getQuotes();
+    } catch (_) {
+      all = [];
+    }
+    const query = inputEl.value || "";
+    const filtered =
+      typeof GRAStorage.searchCards === "function"
+        ? GRAStorage.searchCards(all, query)
+        : all;
+
+    listEl.textContent = "";
+    if (!filtered.length) {
+      const empty = document.createElement("div");
+      empty.className = "gra-popup-cards__empty";
+      empty.textContent = all.length === 0 ? "尚無卡片" : "無符合結果";
+      listEl.appendChild(empty);
+      return;
+    }
+
+    filtered.forEach((c) => {
+      const row = document.createElement("div");
+      row.className = "gra-popup-cards__row";
+      const text = document.createElement("div");
+      text.className = "gra-popup-cards__text";
+      const raw = String(c.text || "");
+      text.textContent = raw.length > 140 ? raw.slice(0, 139) + "…" : raw;
+      row.appendChild(text);
+      if (c.source) {
+        const meta = document.createElement("div");
+        meta.className = "gra-popup-cards__meta";
+        meta.textContent = String(c.source).slice(0, 100);
+        row.appendChild(meta);
+      }
+      listEl.appendChild(row);
+    });
   }
 
   /**
@@ -428,6 +482,13 @@
       elements.btnRefreshDiagnostics.addEventListener("click", () => {
         fetchAndRenderDiagnostics(elements);
         fetchAndRenderJournalStatus(elements);
+        renderKnowledgeCards(elements);
+      });
+    }
+
+    if (elements.cardsSearch) {
+      elements.cardsSearch.addEventListener("input", () => {
+        renderKnowledgeCards(elements);
       });
     }
 
@@ -534,6 +595,87 @@
         exportSnapshotAndDownload(elements, "txt");
       });
     }
+
+    // 資料匯出 / 匯入（本地 storage JSON）
+    if (elements.btnExportData) {
+      elements.btnExportData.addEventListener("click", async () => {
+        const btn = elements.btnExportData;
+        const statusEl = elements.dataIoStatus;
+        btn.disabled = true;
+        if (statusEl) statusEl.textContent = "";
+        try {
+          const payload = await GRAStorage.exportAllPluginData();
+          const json = JSON.stringify(payload, null, 2);
+          const filename = `gra-backup-${new Date().toISOString().slice(0, 10)}.json`;
+          triggerDownload(json, filename, "application/json;charset=utf-8");
+          if (statusEl) {
+            statusEl.textContent = "已匯出";
+            statusEl.className = "gra-popup-data-io__status gra-popup-data-io__status--success";
+          }
+        } catch (err) {
+          if (statusEl) {
+            statusEl.textContent = "匯出失敗";
+            statusEl.className = "gra-popup-data-io__status gra-popup-data-io__status--error";
+          }
+        }
+        setTimeout(() => {
+          btn.disabled = false;
+          if (statusEl) {
+            statusEl.textContent = "";
+            statusEl.className = "gra-popup-data-io__status";
+          }
+        }, 2000);
+      });
+    }
+
+    if (elements.btnImportData && elements.inputImportFile) {
+      elements.btnImportData.addEventListener("click", () => {
+        elements.inputImportFile.click();
+      });
+      elements.inputImportFile.addEventListener("change", async (e) => {
+        const file = e.target.files?.[0];
+        const statusEl = elements.dataIoStatus;
+        elements.inputImportFile.value = "";
+        if (!file) return;
+
+        const btn = elements.btnImportData;
+        btn.disabled = true;
+        if (statusEl) statusEl.textContent = "匯入中…";
+        try {
+          const text = await file.text();
+          const payload = JSON.parse(text);
+          const result = await GRAStorage.importAllPluginData(payload);
+          if (result.success) {
+            if (statusEl) {
+              statusEl.textContent = `已匯入 ${result.importedKeys?.length ?? 0} 筆`;
+              statusEl.className = "gra-popup-data-io__status gra-popup-data-io__status--success";
+            }
+            const fresh = await loadSettings();
+            Object.assign(currentSettings, fresh);
+            applySettingsToUI(fresh, elements);
+            notifyActiveTab(fresh);
+            renderKnowledgeCards(elements);
+          } else {
+            if (statusEl) {
+              statusEl.textContent = result.error === "invalid_payload" ? "無效的檔案" : "匯入失敗";
+              statusEl.className = "gra-popup-data-io__status gra-popup-data-io__status--error";
+            }
+          }
+        } catch (_) {
+          if (statusEl) {
+            statusEl.textContent = "檔案格式錯誤";
+            statusEl.className = "gra-popup-data-io__status gra-popup-data-io__status--error";
+          }
+        }
+        setTimeout(() => {
+          btn.disabled = false;
+          if (statusEl) {
+            statusEl.textContent = "";
+            statusEl.className = "gra-popup-data-io__status";
+          }
+        }, 2500);
+      });
+    }
   }
 
   // ---- 初始化流程 -----------------------------------------------------------
@@ -546,6 +688,7 @@
     bindEvents(elements, settings);
     fetchAndRenderDiagnostics(elements);
     fetchAndRenderJournalStatus(elements);
+    renderKnowledgeCards(elements);
   });
 })();
 

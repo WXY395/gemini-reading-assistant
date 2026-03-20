@@ -81,17 +81,108 @@
     return next;
   }
 
+  /** 為無 id 的舊資料產生穩定 id，避免每次 getQuotes 讀取都換 id。 */
+  function stableLegacyCardId(seed) {
+    const s = String(seed || "");
+    let h = 5381;
+    for (let i = 0; i < s.length; i++) {
+      h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+    }
+    return `gra-legacy-${(h >>> 0).toString(36)}`;
+  }
+
   /**
-   * 取得目前儲存的引用列表。
-   * V1 僅定義為字串陣列，後續可改成物件結構。
+   * 知識卡片結構（gra_quotes 儲存陣列元素）。
+   * 可額外帶 citation 回跳欄位：sourceUrl, sourceMessageId, sourceSelectorHint, sourceTextPreview
+   */
+  function createCard(text, source) {
+    const t = String(text || "").trim();
+    const s = String(source || "").trim();
+    return {
+      id: `gra-card-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+      text: t,
+      source: s,
+      tags: [],
+      note: "",
+      createdAt: Date.now()
+    };
+  }
+
+  /**
+   * 將單筆 storage 項目正規化為卡片（相容舊版字串或缺欄物件）。
+   */
+  function normalizeQuoteOrCardEntry(entry) {
+    if (entry == null) return null;
+    if (typeof entry === "string") {
+      return {
+        id: stableLegacyCardId(`str:${entry}`),
+        text: entry,
+        source: "",
+        tags: [],
+        note: "",
+        createdAt: Date.now()
+      };
+    }
+    if (typeof entry === "object") {
+      const text = entry.text != null ? String(entry.text) : "";
+      const source = entry.source != null ? String(entry.source) : "";
+      const id =
+        entry.id ||
+        stableLegacyCardId(
+          `${text}|${entry.createdAt != null ? entry.createdAt : ""}|${source}`
+        );
+      return {
+        id,
+        text,
+        source,
+        tags: Array.isArray(entry.tags) ? entry.tags.map(String) : [],
+        note: entry.note != null ? String(entry.note) : "",
+        createdAt:
+          typeof entry.createdAt === "number" && !Number.isNaN(entry.createdAt)
+            ? entry.createdAt
+            : Date.now(),
+        sourceUrl: entry.sourceUrl,
+        sourceMessageId: entry.sourceMessageId,
+        sourceSelectorHint: entry.sourceSelectorHint,
+        sourceTextPreview: entry.sourceTextPreview
+      };
+    }
+    return null;
+  }
+
+  /**
+   * 依關鍵字篩選卡片（比對 text / note / tags）。
+   */
+  function searchCards(cards, query) {
+    const list = Array.isArray(cards) ? cards : [];
+    const q = String(query || "")
+      .trim()
+      .toLowerCase();
+    if (!q) return list.slice();
+    return list.filter((c) => {
+      if (!c || typeof c !== "object") return false;
+      const text = String(c.text || "").toLowerCase();
+      const note = String(c.note || "").toLowerCase();
+      const tagStr = (Array.isArray(c.tags) ? c.tags : []).join(" ").toLowerCase();
+      return text.includes(q) || note.includes(q) || tagStr.includes(q);
+    });
+  }
+
+  /**
+   * 取得目前儲存的引用／知識卡片列表（讀取時正規化為卡片結構）。
    */
   async function getQuotes() {
     const stored = await readFromStorage([QUOTES_KEY]);
     const quotes = stored[QUOTES_KEY];
-    if (Array.isArray(quotes)) {
-      return quotes;
+    if (!Array.isArray(quotes)) {
+      return [];
     }
-    return [];
+    const out = [];
+    for (let i = 0; i < quotes.length; i++) {
+      const n = normalizeQuoteOrCardEntry(quotes[i]);
+      if (n) out.push(n);
+    }
+    return out;
   }
 
   /**
@@ -189,6 +280,69 @@
     return snapshot;
   }
 
+  // ---- Export / Import (MVP) ------------------------------------------------
+
+  const PLUGIN_KEY_PREFIX = "gra_";
+
+  /**
+   * 列出 chrome.storage.local 中所有與本插件有關的 key。
+   * @returns {Promise<string[]>}
+   */
+  async function listAllPluginStorageKeys() {
+    return new Promise((resolve) => {
+      chrome.storage.local.get(null, (result) => {
+        const keys = result ? Object.keys(result) : [];
+        resolve(keys.filter((k) => k.startsWith(PLUGIN_KEY_PREFIX)));
+      });
+    });
+  }
+
+  /**
+   * 匯出所有插件本地資料為 JSON 物件。
+   * @returns {Promise<{ schemaVersion: number, exportedAt: number, app: string, data: Object }>}
+   */
+  async function exportAllPluginData() {
+    const keys = await listAllPluginStorageKeys();
+    const data = await new Promise((resolve) => {
+      chrome.storage.local.get(keys, (result) => resolve(result || {}));
+    });
+    return {
+      schemaVersion: 1,
+      exportedAt: Date.now(),
+      app: "Gemini Reading Assistant",
+      data
+    };
+  }
+
+  /**
+   * 匯入插件資料。
+   * @param {Object} payload - 由 exportAllPluginData() 產生的 JSON 物件
+   * @param {{ merge?: boolean }} options - merge: 若 true 則與現有資料合併，預設為 false（覆寫）
+   * @returns {Promise<{ success: boolean, importedKeys?: string[], error?: string }>}
+   */
+  async function importAllPluginData(payload, options) {
+    if (!payload || typeof payload !== "object") {
+      return { success: false, error: "invalid_payload" };
+    }
+    const data = payload.data;
+    if (!data || typeof data !== "object") {
+      return { success: false, error: "invalid_payload_data" };
+    }
+
+    const keys = Object.keys(data).filter((k) => k.startsWith(PLUGIN_KEY_PREFIX));
+    if (keys.length === 0) {
+      return { success: false, error: "no_plugin_keys" };
+    }
+
+    const toWrite = {};
+    for (const k of keys) {
+      toWrite[k] = data[k];
+    }
+
+    await writeToStorage(toWrite);
+    return { success: true, importedKeys: keys };
+  }
+
   // 將工具暴露到全域命名空間，以便在 content script / popup 中共用。
   // 若 window 不存在（例如 background service worker），則僅輸出為自執行函式內部工具。
   if (typeof window !== "undefined") {
@@ -201,12 +355,18 @@
       getQuotes,
       saveQuotes,
       clearQuotes,
+      createCard,
+      normalizeQuoteOrCardEntry,
+      searchCards,
       getConversationIndex,
       saveConversationIndex,
       getConversationJournal,
       saveConversationJournal,
       getConversationSnapshot,
-      saveConversationSnapshot
+      saveConversationSnapshot,
+      listAllPluginStorageKeys,
+      exportAllPluginData,
+      importAllPluginData
     };
   }
 })();

@@ -556,3 +556,78 @@
   color: #fff;
 }
 
+/* ---- Phase 1：閱讀聚焦（Focus Mode）------------------------------------- */
+
+body.gra-focus-active .gra-message {
+  opacity: 0.25;
+  transition: opacity 0.2s ease;
+}
+
+body.gra-focus-active .gra-message.gra-focus-target {
+  opacity: 1;
+}
+
+.gra-focus-target {
+  outline: 2px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+}
+
+/* ---- Phase 1：訊息收合（不改 message 子結構，僅 class）------------------ */
+
+.gra-collapsed {
+  max-height: 120px;
+  overflow: hidden;
+  position: relative;
+}
+
+.gra-collapsed::after {
+  content: "▼ 展開";
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  background: rgba(0, 0, 0, 0.6);
+  padding: 4px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  pointer-events: none;
+  z-index: 3;
+  color: #e5e7eb;
+  border-radius: 4px 0 0 0;
+}
+
+/* ---- Phase 1：Sidebar 列與收合鈕 --------------------------------------- */
+
+.gra-sidebar-nav__item-row {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 2px;
+  margin-bottom: 2px;
+}
+
+.gra-sidebar-nav__item-collapse {
+  flex-shrink: 0;
+  width: 24px;
+  min-height: 28px;
+  padding: 0;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 6px;
+  background: rgba(248, 250, 252, 0.95);
+  color: #64748b;
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.gra-sidebar-nav__item-collapse:hover {
+  background: rgba(226, 232, 240, 0.95);
+  color: #334155;
+}
+
+.gra-sidebar-nav__item-row .gra-sidebar-nav__item {
+  flex: 1;
+  min-width: 0;
+  margin-bottom: 0;
+}
+

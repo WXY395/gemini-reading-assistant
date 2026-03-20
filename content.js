@@ -33,6 +33,12 @@ const DEFAULT_SETTINGS =
  */
 const SUPPORTED_HOSTS = ["gemini.google.com"];
 
+/** 開發驗收用：設為 true 時在 console 輸出 Sidebar block 抓取 debug。 */
+const GRA_DEBUG_SIDEBAR = false;
+
+/** 開發驗收用：Sidebar 點擊跳轉錨點／捲動行為（不改 UI）。 */
+const GRA_DEBUG_SIDEBAR_SCROLL = false;
+
 // ---- 工具函式 --------------------------------------------------------------
 
 /**
@@ -153,6 +159,84 @@ async function saveSettings(settings) {
   });
 }
 
+/**
+ * Phase 1 UX 附加層：閱讀聚焦、訊息收合（不介入 DOM 抽取／分類 pipeline）。
+ * 檔案內模組作用域，不掛到 window。
+ */
+const GraReadingPhase1Ux = (() => {
+  let focusedNode = null;
+  let collapsedExpandListenerBound = false;
+
+  function ensureGraMessage(node) {
+    try {
+      if (node && node.classList) node.classList.add("gra-message");
+    } catch (_) {}
+  }
+
+  function toggleFocus(node) {
+    if (!node || !(node instanceof HTMLElement) || !node.classList) return;
+    if (focusedNode === node) {
+      document.body.classList.remove("gra-focus-active");
+      node.classList.remove("gra-focus-target");
+      focusedNode = null;
+      return;
+    }
+    if (focusedNode && focusedNode.classList) {
+      focusedNode.classList.remove("gra-focus-target");
+    }
+    document.body.classList.add("gra-focus-active");
+    focusedNode = node;
+    node.classList.add("gra-focus-target");
+  }
+
+  function clearFocusForRebuild() {
+    try {
+      document.body.classList.remove("gra-focus-active");
+      if (focusedNode && focusedNode.classList) {
+        focusedNode.classList.remove("gra-focus-target");
+      }
+    } catch (_) {}
+    focusedNode = null;
+  }
+
+  function toggleCollapse(node) {
+    if (!node || !(node instanceof HTMLElement) || !node.classList) return;
+    node.classList.toggle("gra-collapsed");
+  }
+
+  /** 點擊收合區底部「展開」提示時展開（不新增 message 子節點）。 */
+  function ensureCollapsedExpandClickDelegate() {
+    if (collapsedExpandListenerBound) return;
+    collapsedExpandListenerBound = true;
+    document.addEventListener(
+      "click",
+      (e) => {
+        try {
+          const hit = e.target instanceof Element ? e.target : e.target?.parentElement;
+          if (hit && hit.closest && hit.closest(".gra-sidebar-nav")) return;
+          const el = hit && hit.closest && hit.closest(".gra-collapsed.gra-message");
+          if (!el || !document.body.contains(el)) return;
+          const rect = el.getBoundingClientRect();
+          if (rect.height <= 0) return;
+          if (e.clientY < rect.bottom - 44) return;
+          e.preventDefault();
+          e.stopPropagation();
+          el.classList.remove("gra-collapsed");
+        } catch (_) {}
+      },
+      true
+    );
+  }
+
+  return {
+    ensureGraMessage,
+    toggleFocus,
+    toggleCollapse,
+    clearFocusForRebuild,
+    ensureCollapsedExpandClickDelegate
+  };
+})();
+
 // ---- 模組骨架定義 ----------------------------------------------------------
 
 /**
@@ -179,6 +263,8 @@ const SidebarNavigationModule = (() => {
   let items = []; // { id, navEl, targetEl, summary, messageType }
   let observer = null;
   let rescanTimer = null;
+  /** 短時間內 DOM childList 突變次數累計；串流輸出時會上升，用於拉長 debounce 減少主執行緒卡頓。 */
+  let rescanMutationBurstWeight = 0;
   let scrollTicking = false;
 
   // 收合 / 展開 / 固定 狀態
@@ -191,6 +277,66 @@ const SidebarNavigationModule = (() => {
 
   // 供 diagnostics 使用：最後使用的 selector 策略
   let lastStrategy = "none";
+
+  /** 每輪掃描重置：從 turn wrapper 拆出原子訊息時寫入的節點 meta */
+  let sidebarNodeKeptMeta = new WeakMap();
+
+  /** turn wrapper 診斷計數（每輪 findMessageElements 開頭重置） */
+  let lastTurnWrapperStats = {
+    turnWrappersDetected: 0,
+    turnWrappersExtracted: 0,
+    atomicUnitsExtractedCount: 0
+  };
+
+  /**
+   * user prompt 漏抓專用診斷（每輪 findMessageElements 重置）。
+   * @type {{
+   *   userQueryCandidates: object[],
+   *   userLikeNotKept: object[],
+   *   suppressedChains: object[]
+   * } | null}
+   */
+  let lastUserPromptLeakDebug = null;
+
+  function resetUserPromptLeakDebug() {
+    lastUserPromptLeakDebug = {
+      userQueryCandidates: [],
+      userLikeNotKept: [],
+      suppressedChains: []
+    };
+  }
+
+  function previewElText(el, max) {
+    try {
+      return (el.textContent || "").trim().replace(/\s+/g, " ").slice(0, max ?? 90);
+    } catch (_) {
+      return "";
+    }
+  }
+
+  /**
+   * 僅檢查元素自身（不含祖先）是否帶明確 user author。
+   */
+  function isExplicitUserRoleOnElement(el) {
+    if (!el || !(el instanceof HTMLElement)) return false;
+    const a = (
+      el.getAttribute("data-author") ||
+      el.getAttribute("data-message-author") ||
+      ""
+    ).toLowerCase()
+      .trim();
+    if (!a) return false;
+    if (a === "user" || a === "human" || a === "1") return true;
+    return /(^|[^a-z])(user|human|1)([^a-z]|$)/i.test(a);
+  }
+
+  /** 用於漏抓追蹤：user-query、明確 user author、或 isPotentialUserLikeCandidate */
+  function isUserLikeForLeakTracking(el, root) {
+    if (!el || !(el instanceof HTMLElement)) return false;
+    if (isUserQueryTagElement(el)) return true;
+    if (isExplicitUserRoleOnElement(el)) return true;
+    return isPotentialUserLikeCandidate(el, root);
+  }
 
   /**
    * 更新 sidebar 的 state class。
@@ -255,49 +401,363 @@ const SidebarNavigationModule = (() => {
   }
 
   /**
-   * Heuristic 判定訊息類型（僅在 data-author / data-message-author 都不存在時使用）。
-   * 順序：第一優先 user、第二優先 gemini、第三 unknown。
-   * 單純有 p 不排除 user；重度結構（pre/code/table/blockquote/ul/ol/h1-h6）才作為 gemini 強訊號。
+   * 評分 root 候選：加分為正文特徵，扣分為外層殼 / composer 為主。
    */
-  function detectMessageTypeByHeuristic(node) {
-    if (!node || !(node instanceof HTMLElement)) return "unknown";
+  function scoreConversationRootCandidate(el, mainEl) {
+    if (!el || !(el instanceof HTMLElement)) return -9999;
+    let score = 0;
+    const textLen = (el.textContent || "").trim().length;
+    const mainRect = mainEl?.getBoundingClientRect?.() || { width: 1, height: 1 };
+    const elRect = el.getBoundingClientRect();
 
+    if (el === mainEl || el.tagName === "MAIN") {
+      score -= 50;
+    }
+    if (el.closest?.("rich-textarea") || el.querySelector?.("rich-textarea")) score -= 30;
+    if (el.querySelector?.("[contenteditable='true']") && textLen < 500) score -= 20;
+    if (el.querySelector?.(".gra-sidebar-nav, .gra-citation-panel")) score -= 50;
+
+    const paragraphCount = el.querySelectorAll?.("p")?.length || 0;
+    const blockEls = el.querySelectorAll?.("pre, blockquote, ul, ol, article, [role='listitem']")?.length || 0;
+    const messageLike = el.querySelectorAll?.("[data-message-id], [data-qa='message'], [data-qa='conversation-turn'], article")?.length || 0;
+
+    score += Math.min(paragraphCount * 2, 20);
+    score += Math.min(blockEls * 3, 15);
+    score += Math.min(messageLike * 5, 25);
+    if (textLen >= 200) score += 10;
+    if (textLen >= 500) score += 5;
+
+    try {
+      const style = getComputedStyle(el);
+      if (/auto|scroll|overlay/.test(style.overflowY || style.overflow || "")) score += 15;
+    } catch (_) {}
+
+    if (elRect.height > mainRect.height * 0.8 && textLen > 10000) score -= 20;
+    if (elRect.width < 200 || elRect.height < 150) score -= 15;
+
+    return score;
+  }
+
+  /**
+   * 在 main 內找更好的對話內容容器，避免直接選 MAIN.chat-app。
+   * @returns {{ best: HTMLElement, candidates: Array<{ tag, class, textLen, score }> }}
+   */
+  function findBestConversationRootWithinMain(mainEl) {
+    if (!mainEl || !mainEl.querySelector) return { best: mainEl, candidates: [] };
+
+    const firstMessage = findFirstMessageLikeElement(mainEl);
+    if (!firstMessage) return { best: mainEl, candidates: [] };
+
+    const candidateEls = [];
+    let el = firstMessage.parentElement;
+    while (el && el !== mainEl) {
+      if (el.querySelector?.(".gra-sidebar-nav, .gra-citation-panel, .gra-selection-toolbar")) {
+        el = el.parentElement;
+        continue;
+      }
+      const rect = el.getBoundingClientRect();
+      if (rect.width >= 200 && rect.height >= 150) {
+        candidateEls.push(el);
+      }
+      el = el.parentElement;
+    }
+
+    const directChildren = Array.from(mainEl.children || []).filter(
+      (c) => c instanceof HTMLElement && c.getBoundingClientRect().width >= 200
+    );
+    directChildren.forEach((c) => {
+      if (!candidateEls.includes(c)) candidateEls.push(c);
+    });
+
+    const scored = candidateEls.map((c) => ({
+      el: c,
+      score: scoreConversationRootCandidate(c, mainEl)
+    }));
+    const mainScore = scoreConversationRootCandidate(mainEl, mainEl);
+
+    let best = mainEl;
+    let bestScore = mainScore;
+    for (const { el: c, score: s } of scored) {
+      if (s > bestScore) {
+        bestScore = s;
+        best = c;
+      }
+    }
+
+    const candidatesForDebug = [
+      { tag: mainEl.tagName, class: mainEl.className?.slice(0, 40), textLen: (mainEl.textContent || "").trim().length, score: mainScore }
+    ].concat(
+      scored.map(({ el: c, score: s }) => ({
+        tag: c.tagName,
+        class: c.className?.slice(0, 40),
+        textLen: (c.textContent || "").trim().length,
+        score: s
+      }))
+    );
+
+    return { best, candidates: candidatesForDebug };
+  }
+
+  let lastRootCandidates = [];
+  let lastRootChosenReason = "";
+  let lastFirstMessageInfo = { found: false, tag: null, class: null, reason: null };
+
+  /**
+   * 多路徑找第一個 message-like 元素，避免 no-first-message。
+   */
+  function findFirstMessageLikeElement(root) {
+    if (!root || !root.querySelector) return null;
+
+    const exclude = (el) =>
+      el?.closest?.("rich-textarea") || el?.closest?.(".gra-") || el?.closest?.("[role='toolbar']");
+
+    const paths = [
+      () => root.querySelector("[data-message-id]"),
+      () => root.querySelector("[data-qa='message'], [data-qa='conversation-turn']"),
+      () => root.querySelector("article"),
+      () => root.querySelector("section[role='article']"),
+      () => root.querySelector("[role='listitem'][data-author], [role='listitem'][data-message-author]"),
+      () => {
+        const withBlock = root.querySelectorAll("div, section, article");
+        for (const el of withBlock) {
+          if (exclude(el)) continue;
+          const text = (el.textContent || "").trim();
+          if (text.length < 30) continue;
+          if (el.querySelector("p, pre, blockquote, ul, ol")) return el;
+        }
+        return null;
+      },
+      () => {
+        const historyContainer =
+          root.querySelector(".chat-history-scroll-container") ||
+          root.querySelector("[class*='chat-history']") ||
+          root.querySelector("[class*='scroll-container']");
+        if (!historyContainer) return null;
+        const inner = historyContainer.querySelector(
+          "[data-message-id], [data-qa='message'], article, section[role='article'], [role='listitem']"
+        );
+        if (inner) return inner;
+        const withBlock = historyContainer.querySelectorAll("div, section, article");
+        for (const el of withBlock) {
+          if (exclude(el)) continue;
+          const text = (el.textContent || "").trim();
+          if (text.length < 30) continue;
+          if (el.querySelector("p, pre, blockquote, ul, ol")) return el;
+        }
+        return null;
+      }
+    ];
+
+    const reasons = [
+      "data-message-id",
+      "data-qa",
+      "article",
+      "section-article",
+      "role-listitem",
+      "block-content",
+      "history-container-descendant"
+    ];
+
+    for (let i = 0; i < paths.length; i++) {
+      const el = paths[i]();
+      if (el && !exclude(el)) {
+        lastFirstMessageInfo = {
+          found: true,
+          tag: el.tagName,
+          class: el.className?.slice?.(0, 60) || null,
+          reason: reasons[i]
+        };
+        return el;
+      }
+    }
+
+    lastFirstMessageInfo = { found: false, tag: null, class: null, reason: "none" };
+    return null;
+  }
+
+  /**
+   * 鎖定主對話內容根容器。
+   * 策略：先找 scroll 容器，若只得 main 則用評分找更好的 descendant。
+   */
+  function findConversationRootContainer() {
     const main =
       document.querySelector("main[role='main']") ||
       document.querySelector("main") ||
       document.body;
-    if (!main) return "unknown";
+    if (!main) return document.body;
+
+    const firstMessage = findFirstMessageLikeElement(main);
+    if (!firstMessage) {
+      lastRootCandidates = [];
+      lastRootChosenReason = "no-first-message";
+      return main;
+    }
+
+    let el = firstMessage.parentElement;
+    let scrollCandidate = null;
+    while (el && el !== main) {
+      try {
+        if (el.querySelector?.(".gra-sidebar-nav, .gra-citation-panel, .gra-selection-toolbar")) {
+          el = el.parentElement;
+          continue;
+        }
+        const style = getComputedStyle(el);
+        const overflowY = style.overflowY || style.overflow || "";
+        if (/auto|scroll|overlay/.test(overflowY)) {
+          const rect = el.getBoundingClientRect();
+          if (rect.width >= 250 && rect.height >= 200) {
+            scrollCandidate = el;
+            break;
+          }
+        }
+      } catch (_) {}
+      el = el.parentElement;
+    }
+
+    if (scrollCandidate && scrollCandidate !== main) {
+      lastRootCandidates = [{ tag: scrollCandidate.tagName, class: scrollCandidate.className?.slice(0, 40), score: "scroll" }];
+      lastRootChosenReason = "scroll-container";
+      return scrollCandidate;
+    }
+
+    const { best, candidates } = findBestConversationRootWithinMain(main);
+    lastRootCandidates = candidates;
+    lastRootChosenReason = best === main ? "fallback-main" : "scored-best";
+    return best;
+  }
+
+  /**
+   * 計算 heuristic 分數與類型（不依賴「有正文就 gemini」）。
+   * 順序：先明確 user，再明確 gemini，其餘 unknown。
+   */
+  function computeMessageTypeHeuristic(node, allSiblings) {
+    if (!node || !(node instanceof HTMLElement)) {
+      return { type: "unknown", userScore: 0, geminiScore: 0, selectedReason: "invalid-node" };
+    }
+
+    const root = findConversationRootContainer();
+    const rootRect = root.getBoundingClientRect();
+    const rootWidth = rootRect.width || 1;
+    const rootCenterX = rootRect.left + rootRect.width / 2;
 
     const heavyStructureSelector =
       "pre, code, table, blockquote, ul, ol, h1, h2, h3, h4, h5, h6";
     const hasHeavyStructure = !!node.querySelector(heavyStructureSelector);
+    const hasPreOrTable = !!node.querySelector("pre, table");
+    const codeBlocks = node.querySelectorAll("pre, code").length;
+    const listItems = node.querySelectorAll("ul li, ol li").length;
+    const paragraphCount = node.querySelectorAll("p").length;
 
     const textLen = (node.textContent || "").trim().length;
-    const mainRect = main.getBoundingClientRect();
     const nodeRect = node.getBoundingClientRect();
-    const mainCenterX = mainRect.left + mainRect.width / 2;
-    const mainWidth = mainRect.width || 1;
+    const nodeCenterX = nodeRect.left + nodeRect.width / 2;
+    const widthRatio = nodeRect.width / rootWidth;
+    const centerOffsetFromRoot = nodeCenterX - rootCenterX;
 
-    const isRight = nodeRect.left > mainCenterX;
-    const isNarrow = nodeRect.width < mainWidth * 0.6;
-    const isShort = textLen < 250;
+    const isNarrow = widthRatio < 0.58;
+    const isCardLike = isNarrow && nodeRect.height < rootRect.height * 0.25;
+    const isSimpleStructure = paragraphCount <= 2 && !hasPreOrTable && listItems < 3;
 
-    if (isRight && isNarrow && isShort && !hasHeavyStructure) return "user";
-    if (
-      hasHeavyStructure ||
-      textLen >= 150 ||
-      nodeRect.width >= mainWidth * 0.5
-    )
-      return "gemini";
-    return "unknown";
+    let hasLargeNextSibling = false;
+    let nextTextLen = 0;
+    if (Array.isArray(allSiblings) && allSiblings.length > 0) {
+      const idx = allSiblings.indexOf(node);
+      if (idx >= 0 && idx < allSiblings.length - 1) {
+        const next = allSiblings[idx + 1];
+        if (next && next.getBoundingClientRect) {
+          const nextRect = next.getBoundingClientRect();
+          nextTextLen = (next.textContent || "").trim().length;
+          if (nextRect.height > nodeRect.height * 1.4 || nextTextLen > Math.max(textLen * 1.8, 120)) {
+            hasLargeNextSibling = true;
+          }
+        }
+      }
+    }
+
+    let userScore = 0;
+    let geminiScore = 0;
+
+    if (textLen < 280 && !hasHeavyStructure) userScore += 2;
+    else if (textLen < 450 && isSimpleStructure && !hasPreOrTable) userScore += 1;
+
+    if (textLen < 450 && isNarrow) userScore += 1;
+    if (isCardLike && textLen < 500) userScore += 1;
+    if (hasLargeNextSibling && textLen < 400 && !hasHeavyStructure) userScore += 2;
+    if (centerOffsetFromRoot < -15 && textLen < 420 && isNarrow) userScore += 1;
+
+    if (hasPreOrTable) geminiScore += 3;
+    if (codeBlocks >= 2 || (codeBlocks >= 1 && textLen > 200)) geminiScore += 1;
+    if (listItems >= 3) geminiScore += 2;
+    if (node.querySelector("blockquote") && textLen > 80) geminiScore += 2;
+    if (paragraphCount >= 4 && textLen > 500) geminiScore += 1;
+    if (textLen > 900 && widthRatio > 0.48 && !isNarrow) geminiScore += 2;
+    else if (textLen > 700 && widthRatio > 0.52 && paragraphCount >= 3) geminiScore += 1;
+
+    if (hasHeavyStructure && textLen > 200) geminiScore += 1;
+
+    let type = "unknown";
+    let selectedReason = "heuristic-tie";
+
+    if (geminiScore >= 4) {
+      type = "gemini";
+      selectedReason = "strong-gemini-structure";
+    } else if (userScore >= 3 && geminiScore < 3) {
+      type = "user";
+      selectedReason = "strong-user-signals";
+    } else if (userScore >= 2 && geminiScore <= 1) {
+      type = "user";
+      selectedReason = "user-over-weak-gemini";
+    } else if (userScore >= 2 && geminiScore === 2 && textLen < 360) {
+      type = "user";
+      selectedReason = "short-prompt-vs-mild-gemini";
+    } else if (geminiScore >= 3 && userScore < 2) {
+      type = "gemini";
+      selectedReason = "gemini-dominant";
+    } else if (geminiScore >= 2 && userScore === 0 && textLen > 550) {
+      type = "gemini";
+      selectedReason = "long-reply-no-user-signal";
+    } else if (userScore >= 1 && geminiScore <= 1 && textLen < 320) {
+      type = "user";
+      selectedReason = "short-lean-user";
+    } else if (userScore >= 1 && geminiScore === 0) {
+      type = "user";
+      selectedReason = "user-only-weak";
+    } else {
+      type = "unknown";
+      selectedReason = "ambiguous-scores";
+    }
+
+    return { type, userScore, geminiScore, selectedReason };
+  }
+
+  function detectMessageTypeByHeuristic(node, allSiblings) {
+    return computeMessageTypeHeuristic(node, allSiblings).type;
   }
 
   /**
-   * 判定訊息類型：gemini | user | unknown。
-   * 第一層：優先 data-author、data-message-author；無則第二層 heuristic fallback。
+   * 供 debug：含 DOM author 與 heuristic 分數。
    */
-  function detectMessageType(node) {
-    if (!node || !(node instanceof HTMLElement)) return "unknown";
+  function detectMessageTypeWithDetails(node, siblings) {
+    if (!node || !(node instanceof HTMLElement)) {
+      return { type: "unknown", userScore: 0, geminiScore: 0, selectedReason: "invalid" };
+    }
+
+    if (isUserQueryTagElement(node)) {
+      return {
+        type: "user",
+        userScore: null,
+        geminiScore: null,
+        selectedReason: "tag:user-query"
+      };
+    }
+    if (isHighTrustModelComponentTagElement(node)) {
+      return {
+        type: "gemini",
+        userScore: null,
+        geminiScore: null,
+        selectedReason: "tag:model-component"
+      };
+    }
 
     const check = (el) => {
       const author =
@@ -311,18 +771,177 @@ const SidebarNavigationModule = (() => {
       return null;
     };
 
+    const root = findConversationRootContainer();
     let el = node;
-    const main =
-      document.querySelector("main[role='main']") ||
-      document.querySelector("main") ||
-      document.body;
-    while (el && el !== main) {
+    while (el && el !== root && el !== document.body) {
       const result = check(el);
-      if (result) return result;
+      if (result) {
+        return {
+          type: result,
+          userScore: null,
+          geminiScore: null,
+          selectedReason: `data-author:${result}`
+        };
+      }
       el = el.parentElement;
     }
 
-    return detectMessageTypeByHeuristic(node);
+    const h = computeMessageTypeHeuristic(node, siblings);
+    return { type: h.type, userScore: h.userScore, geminiScore: h.geminiScore, selectedReason: h.selectedReason };
+  }
+
+  /**
+   * 判定訊息類型：gemini | user | unknown。
+   * 第一層：優先 data-author、data-message-author；無則第二層 heuristic fallback。
+   * @param {HTMLElement} node
+   * @param {HTMLElement[]} [siblings] - 同批 candidate blocks，供幾何 heuristic 判斷 user→gemini 相鄰結構
+   */
+  function detectMessageType(node, siblings) {
+    return detectMessageTypeWithDetails(node, siblings).type;
+  }
+
+  /** Gemini 實際 DOM：自訂元素 user-query（大小寫不敏感）。 */
+  function isUserQueryTagElement(el) {
+    return !!(el && el.tagName && el.tagName.toUpperCase() === "USER-QUERY");
+  }
+
+  /**
+   * 高可信模型回覆自訂標籤：MODEL-RESPONSE、MODEL-*、BOT-*、RESPONSE-*、GEMINI-*。
+   */
+  function isHighTrustModelComponentTagElement(el) {
+    if (!el || !el.tagName) return false;
+    const t = el.tagName.toUpperCase();
+    if (t === "USER-QUERY") return false;
+    if (t === "MODEL-RESPONSE") return true;
+    if (t.startsWith("MODEL-")) return true;
+    if (t.startsWith("BOT-")) return true;
+    if (t.startsWith("RESPONSE-")) return true;
+    if (t.startsWith("GEMINI-")) return true;
+    return false;
+  }
+
+  /**
+   * 掃描 root 內高可信 DOM 標記（優先於 heuristic / 外層 wrapper）。
+   * @returns {Array<{ el: HTMLElement, sourceSignal: string }>}
+   */
+  function collectHighTrustDomTaggedNodes(root) {
+    const out = [];
+    const seen = new Set();
+    const add = (el, sourceSignal) => {
+      if (!el || !(el instanceof HTMLElement) || !root.contains(el)) return;
+      if (seen.has(el)) return;
+      seen.add(el);
+      out.push({ el, sourceSignal });
+    };
+
+    try {
+      root.querySelectorAll("user-query").forEach((el) => add(el, "user-query-tag"));
+    } catch (_) {}
+
+    const modelSelectors = [
+      "model-response",
+      "model-output",
+      "bot-response",
+      "response-container",
+      "assistant-message",
+      "model-message"
+    ];
+    modelSelectors.forEach((sel) => {
+      try {
+        root.querySelectorAll(sel).forEach((el) => add(el, "model-component-tag"));
+      } catch (_) {}
+    });
+
+    let scanned = 0;
+    const maxScan = 25000;
+    try {
+      const all = root.querySelectorAll("*");
+      for (let i = 0; i < all.length && scanned < maxScan; i++) {
+        scanned += 1;
+        const el = all[i];
+        if (isHighTrustModelComponentTagElement(el)) add(el, "model-component-tag");
+      }
+    } catch (_) {}
+
+    return out;
+  }
+
+  /** 若 A 包含 B，只保留較內層（原子）節點。 */
+  function keepDeepestExclusiveInSet(elements) {
+    const arr = [...new Set(elements)].filter(Boolean);
+    return arr.filter((n) => !arr.some((other) => other !== n && other.contains(n)));
+  }
+
+  /**
+   * 合併 selector 結果與高可信標籤：壓掉包住 USER-QUERY / model 元件的外層候選。
+   */
+  function mergeHighTrustDomTagsIntoCandidates(root, mergedFromSelectors) {
+    const tagged = collectHighTrustDomTaggedNodes(root);
+    const atoms = keepDeepestExclusiveInSet(tagged.map((t) => t.el));
+
+    atoms.forEach((el) => {
+      const hit = tagged.find((x) => x.el === el);
+      const sourceSignal = hit?.sourceSignal || (isUserQueryTagElement(el) ? "user-query-tag" : "model-component-tag");
+      sidebarNodeKeptMeta.set(el, {
+        sourceSignal,
+        ancestorSuppressed: true,
+        keptReason: "high-trust-dom-tag"
+      });
+    });
+
+    const documentOrder = (a, b) => {
+      const pos = a.compareDocumentPosition(b);
+      if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+      if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+      return 0;
+    };
+
+    let merged = mergedFromSelectors.filter((c) => {
+      const innerAtoms = atoms.filter((at) => c !== at && c.contains(at));
+      if (innerAtoms.length === 0) return true;
+      if (lastUserPromptLeakDebug) {
+        const uqOrUserLike = innerAtoms.find(
+          (at) => isUserQueryTagElement(at) || isPotentialUserLikeCandidate(at, root)
+        );
+        const by = uqOrUserLike || innerAtoms[0];
+        lastUserPromptLeakDebug.suppressedChains.push({
+          reason: "merge-high-trust-ancestor-removed",
+          suppressedSelfPreview: previewElText(c, 100),
+          suppressedByPreview: previewElText(by, 100),
+          suppressedTag: c.tagName,
+          keptAtomTag: by.tagName
+        });
+      }
+      return false;
+    });
+    merged = [...new Set([...atoms, ...merged])].sort(documentOrder);
+    return { merged, highTrustAtomCount: atoms.length };
+  }
+
+  function getDepthFromConversationRoot(node, root) {
+    let d = 0;
+    let p = node;
+    while (p && p !== root && p !== document.body) {
+      d += 1;
+      p = p.parentElement;
+    }
+    return d;
+  }
+
+  function inferSourceSignalForKeptPreview(node, selectedReason) {
+    const meta = sidebarNodeKeptMeta.get(node);
+    if (meta && meta.sourceSignal) return meta.sourceSignal;
+    if (isUserQueryTagElement(node)) return "user-query-tag";
+    if (isHighTrustModelComponentTagElement(node)) return "model-component-tag";
+    if (node.getAttribute("data-author") || node.getAttribute("data-message-author"))
+      return "data-author";
+    if (node.getAttribute("data-qa")) return "data-qa";
+    const sr = String(selectedReason || "");
+    if (sr.startsWith("data-author:")) return "data-author";
+    if (sr.startsWith("tag:user-query")) return "user-query-tag";
+    if (sr.startsWith("tag:model-component")) return "model-component-tag";
+    if (sr.includes("data-qa")) return "data-qa";
+    return "fallback-heuristic";
   }
 
   /**
@@ -388,6 +1007,143 @@ const SidebarNavigationModule = (() => {
    */
   function hideTooltip() {
     if (tooltipEl) tooltipEl.style.display = "none";
+  }
+
+  /** 捲動到訊息開頭時，與視窗頂／固定列保留的間距（scroll-margin）。 */
+  const SIDEBAR_SCROLL_TOP_PADDING_PX = 56;
+
+  /**
+   * 訊息內用於捲動定位的節點是否在「工具列／操作區」語境（應略過，改找正文）。
+   */
+  function isScrollAnchorExcludedContext(el, messageRoot) {
+    if (!el || !(el instanceof HTMLElement) || !messageRoot || !messageRoot.contains(el))
+      return true;
+    if (el.closest(".gra-sidebar-nav, .gra-citation-panel, .gra-selection-toolbar"))
+      return true;
+    if (el.matches("button,input,select,textarea,[role='button']")) return true;
+
+    let cur = el;
+    for (let depth = 0; cur && cur !== messageRoot && depth < 28; depth++) {
+      if (!(cur instanceof HTMLElement)) break;
+      const role = (cur.getAttribute("role") || "").toLowerCase();
+      if (role === "toolbar" || role === "menubar" || role === "banner") return true;
+      const tag = cur.tagName;
+      if (tag === "BUTTON" || tag === "FOOTER") return true;
+      const cls =
+        typeof cur.className === "string"
+          ? cur.className.toLowerCase()
+          : String(cur.className?.baseVal ?? "").toLowerCase();
+      if (
+        cls.includes("toolbar") ||
+        cls.includes("action-bar") ||
+        cls.includes("action-row") ||
+        cls.includes("source-control") ||
+        cls.includes("source-controls") ||
+        cls.includes("citation-bar") ||
+        cls.includes("message-actions") ||
+        cls.includes("quick-actions")
+      ) {
+        return true;
+      }
+      cur = cur.parentElement;
+    }
+    return false;
+  }
+
+  function isLikelyVisibleForScrollAnchor(el) {
+    try {
+      const r = el.getBoundingClientRect();
+      if (r.width <= 0 && r.height <= 0) return false;
+      const s = getComputedStyle(el);
+      if (s.display === "none" || s.visibility === "hidden") return false;
+      if (parseFloat(s.opacity || "1") === 0) return false;
+      return true;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  function hasMeaningfulAnchorText(el) {
+    const t = (el.textContent || "").replace(/\u00a0/g, " ").trim();
+    return t.length > 0;
+  }
+
+  /**
+   * 在訊息 block 內找「開頭可讀內容」錨點，供捲動對齊頂部；找不到則退回 message 根節點。
+   * @returns {{ anchor: HTMLElement, usedFallback: boolean }}
+   */
+  function findScrollAnchorWithinMessage(messageRoot) {
+    if (!messageRoot || !(messageRoot instanceof HTMLElement)) {
+      return { anchor: messageRoot, usedFallback: true };
+    }
+
+    const primarySelector =
+      "p, h1, h2, h3, h4, h5, h6, pre, blockquote, li, [role='paragraph'], [role='heading'], rich-text p, rich-text [role='paragraph']";
+
+    let candidates;
+    try {
+      candidates = messageRoot.querySelectorAll(primarySelector);
+    } catch (_) {
+      candidates = [];
+    }
+
+    for (let i = 0; i < candidates.length; i++) {
+      const el = candidates[i];
+      if (!messageRoot.contains(el) || el === messageRoot) continue;
+      if (isScrollAnchorExcludedContext(el, messageRoot)) continue;
+      if (!isLikelyVisibleForScrollAnchor(el)) continue;
+      if (!hasMeaningfulAnchorText(el)) continue;
+      return { anchor: el, usedFallback: false };
+    }
+
+    return { anchor: messageRoot, usedFallback: true };
+  }
+
+  /**
+   * Sidebar 點擊：對應同一 message node，但捲動對齊內部開頭錨點（Gemini / 使用者共用）。
+   */
+  function scrollSidebarTargetIntoView(messageNode, clickedMessageType) {
+    if (!messageNode || !(messageNode instanceof HTMLElement)) return;
+    const { anchor, usedFallback } = findScrollAnchorWithinMessage(messageNode);
+    const targetEl = anchor;
+    if (!targetEl) return;
+    const prevMargin = targetEl.style.scrollMarginTop;
+    targetEl.style.scrollMarginTop = `${SIDEBAR_SCROLL_TOP_PADDING_PX}px`;
+    try {
+      targetEl.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+        inline: "nearest"
+      });
+    } catch (_) {
+      try {
+        targetEl.scrollIntoView();
+      } catch (__) {}
+    }
+    window.setTimeout(() => {
+      try {
+        targetEl.style.scrollMarginTop = prevMargin;
+      } catch (_) {}
+    }, 1200);
+
+    if (GRA_DEBUG_SIDEBAR_SCROLL) {
+      const cn = targetEl.className;
+      console.info("[GRA][sidebar][scroll-debug]", {
+        clickedMessageType,
+        targetTag: messageNode.tagName,
+        anchorTag: targetEl.tagName,
+        anchorClass:
+          typeof cn === "string" ? cn.slice(0, 80) : String(cn || "").slice(0, 80),
+        usedFallbackNode: usedFallback
+      });
+    }
+  }
+
+  /**
+   * Phase 1 規格名稱：委派至既有 scrollSidebarTargetIntoView，行為不變。
+   */
+  function scrollToMessageTop(messageNode, messageType) {
+    scrollSidebarTargetIntoView(messageNode, messageType);
   }
 
   /**
@@ -467,6 +1223,8 @@ const SidebarNavigationModule = (() => {
 
   /**
    * 依 currentFilter 顯示/隱藏節點。
+   * Tab 內部值（與 button dataset.filter 一致）："all" | "gemini" | "user"
+   * 過濾欄位：item.messageType（與 rebuildNavigation 時 detectMessageType 結果相同）
    */
   function applyFilter() {
     items.forEach((item) => {
@@ -474,48 +1232,1001 @@ const SidebarNavigationModule = (() => {
         currentFilter === "all" ||
         (currentFilter === "gemini" && item.messageType === "gemini") ||
         (currentFilter === "user" && item.messageType === "user");
-      item.navEl.style.display = match ? "" : "none";
+      const shell = item.rowEl || item.navEl;
+      if (shell) shell.style.display = match ? "" : "none";
     });
+
+    const renderedTypes = { gemini: 0, user: 0, unknown: 0 };
+    let renderedCount = 0;
+    items.forEach((item) => {
+      const shell = item.rowEl || item.navEl;
+      if (!shell || shell.style.display === "none") return;
+      renderedCount += 1;
+      const t = item.messageType;
+      if (t === "gemini" || t === "user" || t === "unknown") {
+        renderedTypes[t] += 1;
+      } else {
+        renderedTypes.unknown += 1;
+      }
+    });
+
+    console.info("[GRA][sidebar][render]", {
+      activeFilter: currentFilter,
+      renderedCount,
+      renderedTypes,
+      totalItems: items.length
+    });
+
     updateActiveItem();
   }
 
   /**
-   * 保守、可維護的訊息節點選取策略：
-   *
-   * 1. 優先鎖定主內容區：
-   *    - 嘗試抓取 <main role="main"> 或 <main>
-   * 2. 在主內容區內，依序嘗試以下 selector：
-   *    - [data-message-id]：常見於聊天訊息元素
-   *    - [data-qa="message"], [data-qa="conversation-turn"]：常見 QA / 內部測試標記
-   *    - [role="listitem"][data-author] 或 [data-message-author]
-   *    - 最後退回到 <article> 作為一般內容區塊
-   *
-   * 不使用自動產生的 class 名稱（例如含隨機 hash 的類名），
-   * 以降低 DOM 更新時壞掉的機率。
+   * 正規化文字供比對用。
    */
-  function findMessageElements() {
-    const main =
-      document.querySelector("main[role='main']") ||
-      document.querySelector("main") ||
-      document.body;
+  function normalizeTextForCompare(text) {
+    return (text || "").trim().replace(/\s+/g, " ").slice(0, 200);
+  }
 
-    if (!main) return [];
+  /**
+   * 是否為聊天歷史容器（chat-history-scroll-container 等），非一般 control-heavy。
+   */
+  function isHistoryWrapperContainer(el) {
+    if (!el || !(el instanceof HTMLElement)) return false;
+    const cn = (el.className || "").toLowerCase();
+    const hasHistoryClass = cn.includes("chat-history") || cn.includes("history-container");
+    const hasScrollContainer = cn.includes("scroll-container");
+    const textLen = (el.textContent || "").trim().length;
+    const blockCount = el.querySelectorAll?.("p, pre, blockquote, ul, ol, article, [role='listitem']")?.length || 0;
+    const messageLike = el.querySelectorAll?.("[data-message-id], [data-qa='message'], article")?.length || 0;
+    if ((hasHistoryClass || hasScrollContainer) && (textLen >= 100 || blockCount >= 2 || messageLike >= 1)) {
+      return true;
+    }
+    if (hasHistoryClass && textLen >= 50) return true;
+    return false;
+  }
+
+  /**
+   * 從 history wrapper 內提取 message-like 子節點。
+   */
+  function extractMessageLikeDescendantsFromHistoryWrapper(el, root) {
+    if (!el || !(el instanceof HTMLElement)) return [];
+    const selectors =
+      "user-query, model-response, model-output, bot-response, [data-message-id], [data-qa='message'], [data-qa='conversation-turn'], [role='listitem'][data-author], article, section[role='article']";
+    const found = Array.from(el.querySelectorAll(selectors));
+    const withBlock = Array.from(el.querySelectorAll("div, section, article")).filter((desc) => {
+      if (desc.closest("rich-textarea") || desc.closest(".gra-")) return false;
+      const text = (desc.textContent || "").trim();
+      if (text.length < 20) return false;
+      return !!desc.querySelector("p, pre, blockquote, ul, ol, h1, h2, h3, h4, h5, h6");
+    });
+    const merged = [...found];
+    withBlock.forEach((d) => {
+      if (!merged.some((m) => m === d || m.contains(d) || d.contains(m))) merged.push(d);
+    });
+    const documentOrder = (a, b) => {
+      const pos = a.compareDocumentPosition(b);
+      if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+      if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+      return 0;
+    };
+    merged.sort(documentOrder);
+    return merged.filter((n) => n !== el && el.contains(n));
+  }
+
+  /**
+   * 是否為 control-heavy block（button row / toolbar / menu / 純 icon 區塊）。
+   * history wrapper 不算 control-heavy。
+   */
+  function isControlHeavyBlock(el) {
+    if (!el || !(el instanceof HTMLElement)) return false;
+    if (isHistoryWrapperContainer(el)) return false;
+    const buttons = el.querySelectorAll("button, [role='button'], [role='menu'], [role='toolbar']");
+    const svgs = el.querySelectorAll("svg");
+    const textLen = (el.textContent || "").trim().replace(/\s+/g, " ").length;
+    const controlCount = buttons.length + Math.min(svgs.length, 5);
+    if (controlCount >= 2 && textLen < 30) return true;
+    if (controlCount >= 3 && textLen < 80) return true;
+    if (el.closest("[role='toolbar']") || el.closest("[role='menu']")) return true;
+    const tag = el.tagName?.toLowerCase();
+    if (tag === "button" || (tag === "div" && el.querySelector("button:only-child"))) return true;
+    return false;
+  }
+
+  /**
+   * 是否靠近 composer / input 區域。
+   */
+  function isNearComposerRegion(el, root) {
+    if (!el || !root) return false;
+    const composer =
+      root.querySelector("rich-textarea, [contenteditable='true'], textarea, [role='textbox']") ||
+      document.querySelector("rich-textarea");
+    if (!composer) return false;
+    const composerRect = composer.getBoundingClientRect();
+    const elRect = el.getBoundingClientRect();
+    const rootRect = root.getBoundingClientRect();
+    const distFromComposer = Math.abs(elRect.bottom - composerRect.top);
+    if (distFromComposer < 150) return true;
+    const inBottomZone = elRect.top > rootRect.bottom - 200;
+    if (inBottomZone && elRect.height < 80) return true;
+    return false;
+  }
+
+  /**
+   * 從 wrapper 內提取更像單一訊息的子容器。
+   */
+  function extractMessageLikeDescendantsFromWrapper(wrapper, root) {
+    if (!wrapper || !(wrapper instanceof HTMLElement)) return [];
+    const selectors =
+      "user-query, model-response, model-output, bot-response, [data-message-id], [data-qa='message'], [data-qa='conversation-turn'], [role='listitem'][data-author], article, section[role='article']";
+    const found = Array.from(wrapper.querySelectorAll(selectors));
+    const withBlock = Array.from(wrapper.querySelectorAll("div")).filter((el) => {
+      if (el.closest("rich-textarea") || el.closest(".gra-")) return false;
+      const text = (el.textContent || "").trim();
+      if (text.length < 30) return false;
+      return !!el.querySelector("p, pre, blockquote, ul, ol, h1, h2, h3, h4, h5, h6");
+    });
+    const merged = [...found];
+    withBlock.forEach((el) => {
+      if (!merged.some((m) => m.contains(el) || el.contains(m))) merged.push(el);
+    });
+    const documentOrder = (a, b) => {
+      const pos = a.compareDocumentPosition(b);
+      if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+      if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+      return 0;
+    };
+    merged.sort(documentOrder);
+    return merged.filter((el) => el !== wrapper && wrapper.contains(el));
+  }
+
+  /**
+   * 兩 block 文本是否高度重複。
+   */
+  function areBlocksTextuallyRedundant(a, b) {
+    const ta = normalizeTextForCompare(a?.textContent || "");
+    const tb = normalizeTextForCompare(b?.textContent || "");
+    if (!ta || !tb) return false;
+    if (ta === tb) return true;
+    const minLen = Math.min(ta.length, tb.length);
+    if (minLen < 20) return false;
+    const overlap = ta.slice(0, 60) === tb.slice(0, 60) || ta.slice(-40) === tb.slice(-40);
+    if (overlap && Math.abs(ta.length - tb.length) < 30) return true;
+    return false;
+  }
+
+  /**
+   * 判斷父層是否為完整 message container，子層是否只是內容片段。
+   */
+  function shouldPreferChildOverParent(parent, child) {
+    const pText = (parent.textContent || "").trim().replace(/\s+/g, " ");
+    const cText = (child.textContent || "").trim().replace(/\s+/g, " ");
+    if (!cText || cText.length < 15) return false;
+    const ratio = cText.length / (pText.length || 1);
+    if (ratio > 0.85 && Math.abs(pText.length - cText.length) < 50) return true;
+    const childTags = child.querySelectorAll("p, pre, blockquote, ul, ol, h1, h2, h3, h4, h5, h6");
+    const parentHasMultipleBlocks = parent.querySelectorAll("article, section, [role='listitem']").length > 1;
+    if (parentHasMultipleBlocks && childTags.length <= 2) return true;
+    return false;
+  }
+
+  /**
+   * prune 前看似 user prompt 的候選（短、窄、結構簡），用於 debug。
+   */
+  function isPotentialUserLikeCandidate(el, root) {
+    if (!el || !(el instanceof HTMLElement)) return false;
+    const textLen = (el.textContent || "").trim().length;
+    if (textLen > 500 || textLen < 15) return false;
+    if (el.querySelector("pre, table, blockquote")) return false;
+    const rootRect = root?.getBoundingClientRect?.() || { width: 1 };
+    const elRect = el.getBoundingClientRect();
+    const widthRatio = elRect.width / (rootRect.width || 1);
+    if (widthRatio < 0.62 || textLen < 350) return true;
+    if (textLen < 200 && el.querySelectorAll("p").length <= 2) return true;
+    return false;
+  }
+
+  /**
+   * 舊版 generic prune 的 too-short 條件（含誤殺純中文的 /^[\s\W]*$/），僅供 debug「若未放寬會否排除」。
+   */
+  function wouldHitLegacyGenericTooShort(el, text, textLen) {
+    if (!el || !(el instanceof HTMLElement)) return false;
+    if (isUserQueryTagElement(el) || isHighTrustModelComponentTagElement(el)) return false;
+    if (textLen < 15) return true;
+    if (/^[\s\W]*$/.test(text)) return true;
+    if (textLen < 20 && !el.querySelector("p, pre, blockquote")) return true;
+    return false;
+  }
+
+  /**
+   * 高可信 user：略過過嚴的 too-short（仍排除全空白／無可見字元）。
+   * - tag USER-QUERY
+   * - turn 拆出後 meta sourceSignal === user-query-tag
+   * - 本節點 data-author / data-message-author 明確 user
+   * - summarizeInspectNode 判定 user-only（likelyUser 有、likelyGemini 無）
+   * - isPotentialUserLikeCandidate（與 prunedUserLikeCandidates 同套「看似 user prompt」heuristic）
+   */
+  function isHighTrustUserForTooShortSkip(el, root) {
+    if (!el || !(el instanceof HTMLElement)) return false;
+    if (isUserQueryTagElement(el)) return true;
+    if (isExplicitUserRoleOnElement(el)) return true;
+    const meta = sidebarNodeKeptMeta.get(el);
+    if (meta && meta.sourceSignal === "user-query-tag") return true;
+    try {
+      const summary = summarizeInspectNode(el, 0);
+      if (summary.hints.likelyUser.length > 0 && summary.hints.likelyGemini.length === 0) return true;
+    } catch (_) {}
+    return isPotentialUserLikeCandidate(el, root);
+  }
+
+  /**
+   * 最終 kept 中，若無放寬會被舊 too-short 排除的高可信 user 筆數（含 USER-QUERY 純 CJK 舊誤殺）。
+   */
+  function computeRecoveredUserCountFromTooShort(kept, root) {
+    if (!Array.isArray(kept) || !root) return 0;
+    let n = 0;
+    for (let i = 0; i < kept.length; i++) {
+      const el = kept[i];
+      if (!isHighTrustUserForTooShortSkip(el, root)) continue;
+      const text = (el.textContent || "").trim().replace(/\s+/g, " ");
+      const textLen = text.length;
+      if (isUserQueryTagElement(el)) {
+        if (textLen < 1) continue;
+        if (/\S/.test(text) && /^[\s\W]*$/.test(text)) n += 1;
+      } else if (!isHighTrustModelComponentTagElement(el) && wouldHitLegacyGenericTooShort(el, text, textLen)) {
+        n += 1;
+      }
+    }
+    return n;
+  }
+
+  /**
+   * turn wrapper 內「可讀內容區塊」數量（粗略）：足夠長的 p/li/pre 或訊息節點。
+   */
+  function countReadableContentBlocksInTurn(el) {
+    if (!el || !(el instanceof HTMLElement)) return 0;
+    const blocks = el.querySelectorAll(
+      "p, li, pre, article, [data-message-id], [data-qa='message'], [data-qa='conversation-turn']"
+    );
+    let n = 0;
+    blocks.forEach((b) => {
+      try {
+        if ((b.textContent || "").trim().length >= 22) n += 1;
+      } catch (_) {}
+    });
+    return Math.min(n, 40);
+  }
+
+  /**
+   * 同一 DOM 區塊內是否同時出現「使用者側」與「模型側」常見文案或 author 訊號。
+   */
+  function containsUserAndGeminiMixedText(el) {
+    if (!el || !(el instanceof HTMLElement)) return false;
+    const text = (el.textContent || "").trim();
+    if (text.length < 200) return false;
+
+    const userPatterns = [
+      /你說了/,
+      /你(剛才|剛剛)?說/,
+      /你的(訊息|問題|提問|留言|內容)/,
+      /You said/i,
+      /Your (message|prompt|question)/i
+    ];
+    const modelPatterns = [
+      /點子發想/,
+      /\bGemini\b/,
+      /^(細節|摘要|重點|結論)/m,
+      /Here's (what|how|a )/i,
+      /I'?m (happy|glad|pleased)/i
+    ];
+
+    const hasUserPhrase = userPatterns.some((re) => re.test(text));
+    const hasModelPhrase = modelPatterns.some((re) => re.test(text));
+
+    let hasUserAuth = false;
+    let hasModelAuth = false;
+    try {
+      el.querySelectorAll("[data-author], [data-message-author]").forEach((n) => {
+        const a = (
+          n.getAttribute("data-author") ||
+          n.getAttribute("data-message-author") ||
+          ""
+        ).toLowerCase();
+        if (/(^|[^a-z])(user|human|1)([^a-z]|$)/i.test(a)) hasUserAuth = true;
+        if (/(model|assistant|gemini|2)/i.test(a)) hasModelAuth = true;
+      });
+    } catch (_) {}
+
+    if (hasUserAuth && hasModelAuth) return true;
+    return hasUserPhrase && hasModelPhrase;
+  }
+
+  /**
+   * 是否為「整輪對話」外層容器（同時含 user + model 文本、偏長、內部多區塊）。
+   */
+  function isConversationTurnWrapper(el, root) {
+    if (!el || !(el instanceof HTMLElement)) return false;
+    if (isHistoryWrapperContainer(el)) return false;
+    try {
+      if (el.closest("rich-textarea") || el.closest(".gra-")) return false;
+    } catch (_) {}
+
+    const textLen = (el.textContent || "").trim().length;
+    if (textLen < 480) return false;
+
+    const mixed = containsUserAndGeminiMixedText(el);
+    const innerMsg = el.querySelectorAll(
+      "[data-message-id], [data-qa='message'], [data-qa='conversation-turn']"
+    ).length;
+    const regions = countReadableContentBlocksInTurn(el);
+    const tag = el.tagName.toUpperCase();
+    const broadShell = tag === "DIV" || tag === "SECTION" || tag === "ARTICLE";
+    const multiChild = el.children.length >= 2;
+
+    let signals = 0;
+    if (textLen > 800) signals += 1;
+    if (textLen > 1200) signals += 1;
+    if (mixed) signals += 2;
+    if (innerMsg >= 2) signals += 2;
+    if (regions >= 4) signals += 1;
+    if (broadShell && multiChild) signals += 1;
+
+    return signals >= 4 && (mixed || innerMsg >= 2 || regions >= 4);
+  }
+
+  /**
+   * 若集合內 A 包含 B，則丟棄外層 A，保留較內層、較原子的節點。
+   */
+  function keepMostSpecificMessageNodes(nodes) {
+    const arr = nodes.filter((n) => n && n instanceof HTMLElement);
+    return arr.filter(
+      (n) => !arr.some((other) => other !== n && n.contains(other))
+    );
+  }
+
+  /**
+   * 從 turn wrapper 內抽出原子訊息節點（不重複保留 wrapper 本身）。
+   */
+  function extractAtomicMessageUnitsFromTurnWrapper(wrapper, root) {
+    if (!wrapper || !(wrapper instanceof HTMLElement) || !root) return [];
+
+    const documentOrder = (a, b) => {
+      const pos = a.compareDocumentPosition(b);
+      if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+      if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+      return 0;
+    };
+
+    const fromDomTags = [];
+    try {
+      wrapper.querySelectorAll("user-query").forEach((n) => fromDomTags.push(n));
+      wrapper
+        .querySelectorAll(
+          "model-response, model-output, bot-response, response-container, assistant-message, model-message"
+        )
+        .forEach((n) => {
+          if (isHighTrustModelComponentTagElement(n)) fromDomTags.push(n);
+        });
+    } catch (_) {}
+
+    let units = [...fromDomTags, ...extractMessageLikeDescendantsFromWrapper(wrapper, root)];
+    units = [...new Set(units)];
+    units = keepMostSpecificMessageNodes(units);
+    units.sort(documentOrder);
+
+    if (units.length >= 2) {
+      return units;
+    }
+
+    const directKids = Array.from(wrapper.children).filter((child) => {
+      if (!(child instanceof HTMLElement)) return false;
+      try {
+        if (child.closest("rich-textarea") || child.closest(".gra-")) return false;
+      } catch (_) {}
+      if (isControlHeavyBlock(child)) return false;
+      const tl = (child.textContent || "").trim().length;
+      if (tl < 35) return false;
+      const hasBlocks =
+        !!child.querySelector(
+          "p, pre, ul, ol, blockquote, article, [data-message-id], [data-qa='message']"
+        ) || tl > 100;
+      return hasBlocks;
+    });
+
+    let kids = keepMostSpecificMessageNodes(directKids);
+    kids.sort(documentOrder);
+
+    if (kids.length >= 2) {
+      return kids;
+    }
+
+    if (units.length === 1) return units;
+    if (kids.length === 1) return kids;
+
+    return [];
+  }
+
+  /**
+   * 合併 selector 結果後、prune 前：先拆 turn wrapper，原子訊息優先於大外層。
+   */
+  function expandTurnWrappersInCandidateList(candidates, root) {
+    const documentOrder = (a, b) => {
+      const pos = a.compareDocumentPosition(b);
+      if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+      if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+      return 0;
+    };
+
+    const sorted = [...candidates].filter(Boolean).sort(documentOrder);
+    const out = [];
+    const seen = new Set();
+
+    const recordSplitMeta = (units) => {
+      const n = units.length;
+      units.forEach((u) => {
+        const base = {
+          keptReason: "turn-wrapper-split",
+          atomicChildCount: n,
+          fromTurnWrapper: true
+        };
+        if (isUserQueryTagElement(u)) {
+          sidebarNodeKeptMeta.set(u, {
+            ...base,
+            sourceSignal: "user-query-tag",
+            ancestorSuppressed: true
+          });
+        } else if (isHighTrustModelComponentTagElement(u)) {
+          sidebarNodeKeptMeta.set(u, {
+            ...base,
+            sourceSignal: "model-component-tag",
+            ancestorSuppressed: true
+          });
+        } else {
+          sidebarNodeKeptMeta.set(u, base);
+        }
+      });
+    };
+
+    for (const el of sorted) {
+      if (!(el instanceof HTMLElement) || seen.has(el)) continue;
+
+      if (isUserQueryTagElement(el) || isHighTrustModelComponentTagElement(el)) {
+        seen.add(el);
+        out.push(el);
+        if (!sidebarNodeKeptMeta.has(el)) {
+          sidebarNodeKeptMeta.set(el, {
+            sourceSignal: isUserQueryTagElement(el) ? "user-query-tag" : "model-component-tag",
+            ancestorSuppressed: true,
+            keptReason: "high-trust-dom-tag"
+          });
+        }
+        continue;
+      }
+
+      if (isHistoryWrapperContainer(el)) {
+        seen.add(el);
+        out.push(el);
+        continue;
+      }
+
+      if (isConversationTurnWrapper(el, root)) {
+        lastTurnWrapperStats.turnWrappersDetected += 1;
+        const units = extractAtomicMessageUnitsFromTurnWrapper(el, root);
+
+        if (units.length >= 2) {
+          lastTurnWrapperStats.turnWrappersExtracted += 1;
+          lastTurnWrapperStats.atomicUnitsExtractedCount += units.length;
+          recordSplitMeta(units);
+          for (const u of units) {
+            if (u && !seen.has(u)) {
+              seen.add(u);
+              out.push(u);
+            }
+          }
+          continue;
+        }
+
+        if (units.length === 1 && units[0] !== el) {
+          lastTurnWrapperStats.turnWrappersExtracted += 1;
+          lastTurnWrapperStats.atomicUnitsExtractedCount += 1;
+          const u = units[0];
+          sidebarNodeKeptMeta.set(u, {
+            keptReason: "turn-wrapper-single-unit",
+            atomicChildCount: 1,
+            fromTurnWrapper: true
+          });
+          if (!seen.has(u)) {
+            seen.add(u);
+            out.push(u);
+          }
+          continue;
+        }
+
+        sidebarNodeKeptMeta.set(el, {
+          keptReason: "turn-wrapper-fallback-unsplit",
+          atomicChildCount: 0,
+          fromTurnWrapper: true
+        });
+        seen.add(el);
+        out.push(el);
+        continue;
+      }
+
+      seen.add(el);
+      out.push(el);
+    }
+
+    const unique = [...new Set(out)];
+    unique.sort(documentOrder);
+    return unique;
+  }
+
+  /**
+   * 統一 prune：排除不適合的 candidate，只保留更像單一對話訊息的 block。
+   * @returns {{ kept: HTMLElement[], excluded: Array<{ el: HTMLElement, reason: string }>, prunedUserLikeCandidates: Array, tooShortSkippedForHighTrustUserCount: number }}
+   */
+  function pruneMessageElementCandidates(candidates, root) {
+    const excluded = [];
+    const extractedFromWrappers = [];
+    const prunedUserLikeCandidates = [];
+    let tooShortSkippedForHighTrustUserCount = 0;
+
+    const addExcluded = (el, reason) => {
+      excluded.push({ el, reason });
+      if (isPotentialUserLikeCandidate(el, root)) {
+        prunedUserLikeCandidates.push({
+          tag: el.tagName,
+          class: el.className?.slice(0, 60) || "",
+          textLen: (el.textContent || "").trim().length,
+          excludedReason: reason,
+          textPreview: (el.textContent || "").trim().replace(/\s+/g, " ").slice(0, 80)
+        });
+      }
+      if (lastUserPromptLeakDebug && isUserLikeForLeakTracking(el, root)) {
+        const tl = (el.textContent || "").trim().length;
+        lastUserPromptLeakDebug.userLikeNotKept.push({
+          tag: el.tagName,
+          class:
+            typeof el.className === "string"
+              ? el.className.slice(0, 100)
+              : String(el.className || "").slice(0, 60),
+          textPreview: previewElText(el, 100),
+          textLen: tl,
+          excludedReason: reason,
+          nearComposer: isNearComposerRegion(el, root),
+          tooShort: tl < 15,
+          ancestorSuppressed: sidebarNodeKeptMeta.get(el)?.ancestorSuppressed === true
+        });
+      }
+    };
+
+    let kept = candidates.filter((el) => {
+      if (!el || !(el instanceof HTMLElement)) return false;
+
+      const text = (el.textContent || "").trim().replace(/\s+/g, " ");
+      const textLen = text.length;
+
+      const isUq = isUserQueryTagElement(el);
+      const isMc = isHighTrustModelComponentTagElement(el);
+      const explicitUser = isExplicitUserRoleOnElement(el);
+
+      if (isUq) {
+        if (textLen < 1) {
+          addExcluded(el, "too-short");
+          return false;
+        }
+        // 舊版 /^[\s\W]*$/ 會把純 CJK 當成「無語意」；改為僅排除無可見字元（全空白等）
+        if (!/\S/.test(text)) {
+          addExcluded(el, "too-short");
+          return false;
+        }
+        if (textLen >= 1 && /\S/.test(text) && /^[\s\W]*$/.test(text)) {
+          tooShortSkippedForHighTrustUserCount += 1;
+        }
+        if (isHistoryWrapperContainer(el)) {
+          const extracted = extractMessageLikeDescendantsFromHistoryWrapper(el, root);
+          if (extracted.length > 0) {
+            extractedFromWrappers.push(...extracted);
+            addExcluded(el, "history-wrapper-extracted");
+            return false;
+          }
+          addExcluded(el, "history-wrapper-empty");
+          return false;
+        }
+        return true;
+      }
+
+      if (isMc) {
+        if (textLen < 8 || /^[\s\W]*$/.test(text)) {
+          addExcluded(el, "too-short");
+          return false;
+        }
+        if (isHistoryWrapperContainer(el)) {
+          const extracted = extractMessageLikeDescendantsFromHistoryWrapper(el, root);
+          if (extracted.length > 0) {
+            extractedFromWrappers.push(...extracted);
+            addExcluded(el, "history-wrapper-extracted");
+            return false;
+          }
+          addExcluded(el, "history-wrapper-empty");
+          return false;
+        }
+        if (isControlHeavyBlock(el)) {
+          addExcluded(el, "control-heavy");
+          return false;
+        }
+        return true;
+      }
+
+      const htUserSkip = isHighTrustUserForTooShortSkip(el, root);
+      if (htUserSkip) {
+        if (!/\S/.test(text)) {
+          addExcluded(el, "too-short");
+          return false;
+        }
+        if (wouldHitLegacyGenericTooShort(el, text, textLen)) {
+          tooShortSkippedForHighTrustUserCount += 1;
+        }
+      } else {
+        if (textLen < 15) {
+          addExcluded(el, "too-short");
+          return false;
+        }
+        if (
+          /^[\s\W]*$/.test(text) ||
+          (textLen < 20 && !el.querySelector("p, pre, blockquote"))
+        ) {
+          addExcluded(el, "too-short");
+          return false;
+        }
+      }
+
+      if (isHistoryWrapperContainer(el)) {
+        const extracted = extractMessageLikeDescendantsFromHistoryWrapper(el, root);
+        if (extracted.length > 0) {
+          extractedFromWrappers.push(...extracted);
+          addExcluded(el, "history-wrapper-extracted");
+          return false;
+        }
+        addExcluded(el, "history-wrapper-empty");
+        return false;
+      }
+
+      if (isControlHeavyBlock(el)) {
+        addExcluded(el, "control-heavy");
+        return false;
+      }
+
+      if (isNearComposerRegion(el, root) && !explicitUser && !isUq) {
+        addExcluded(el, "near-composer");
+        return false;
+      }
+
+      const rootRect = root.getBoundingClientRect();
+      const elRect = el.getBoundingClientRect();
+      const isOversizedWrapper = elRect.height > rootRect.height * 0.6 && textLen > 5000;
+      const innerBlocks = el.querySelectorAll("[data-message-id], [data-qa='message'], article, [role='listitem']");
+      const isMultiBlockWrapper = innerBlocks.length >= 3 && textLen > 2000;
+
+      if (isOversizedWrapper || isMultiBlockWrapper) {
+        const extracted = extractMessageLikeDescendantsFromWrapper(el, root);
+        if (extracted.length > 0) {
+          extractedFromWrappers.push(...extracted);
+          addExcluded(el, "wrapper-extracted");
+          return false;
+        }
+        addExcluded(el, "wrapper");
+        return false;
+      }
+
+      if (isConversationTurnWrapper(el, root)) {
+        const atomic = extractAtomicMessageUnitsFromTurnWrapper(el, root);
+        if (atomic.length >= 2) {
+          lastTurnWrapperStats.turnWrappersDetected += 1;
+          lastTurnWrapperStats.turnWrappersExtracted += 1;
+          lastTurnWrapperStats.atomicUnitsExtractedCount += atomic.length;
+          atomic.forEach((u) => {
+            const base = {
+              keptReason: "turn-wrapper-split-prune",
+              atomicChildCount: atomic.length,
+              fromTurnWrapper: true
+            };
+            if (isUserQueryTagElement(u)) {
+              sidebarNodeKeptMeta.set(u, {
+                ...base,
+                sourceSignal: "user-query-tag",
+                ancestorSuppressed: true
+              });
+            } else if (isHighTrustModelComponentTagElement(u)) {
+              sidebarNodeKeptMeta.set(u, {
+                ...base,
+                sourceSignal: "model-component-tag",
+                ancestorSuppressed: true
+              });
+            } else {
+              sidebarNodeKeptMeta.set(u, base);
+            }
+          });
+          extractedFromWrappers.push(...atomic);
+          addExcluded(el, "turn-wrapper-extracted");
+          return false;
+        }
+        if (atomic.length === 1 && atomic[0] !== el) {
+          lastTurnWrapperStats.turnWrappersDetected += 1;
+          lastTurnWrapperStats.turnWrappersExtracted += 1;
+          lastTurnWrapperStats.atomicUnitsExtractedCount += 1;
+          sidebarNodeKeptMeta.set(atomic[0], {
+            keptReason: "turn-wrapper-single-prune",
+            atomicChildCount: 1,
+            fromTurnWrapper: true
+          });
+          extractedFromWrappers.push(atomic[0]);
+          addExcluded(el, "turn-wrapper-extracted");
+          return false;
+        }
+      }
+
+      return true;
+    });
+
+    const documentOrder = (a, b) => {
+      const pos = a.compareDocumentPosition(b);
+      if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+      if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+      return 0;
+    };
+    kept = [...kept, ...extractedFromWrappers];
+    kept.sort(documentOrder);
+
+    kept = kept.filter((el, i) => {
+      for (let j = 0; j < kept.length; j++) {
+        if (i === j) continue;
+        const other = kept[j];
+        if (el.contains(other)) {
+          if (isUserQueryTagElement(other) || shouldPreferChildOverParent(el, other)) {
+            addExcluded(el, "duplicate-parent");
+            if (lastUserPromptLeakDebug && isUserLikeForLeakTracking(el, root)) {
+              lastUserPromptLeakDebug.suppressedChains.push({
+                reason: "dedupe-duplicate-parent",
+                suppressedSelfPreview: previewElText(el, 100),
+                suppressedByPreview: previewElText(other, 100),
+                suppressedTag: el.tagName,
+                keptAtomTag: other.tagName
+              });
+            }
+            return false;
+          }
+        }
+        if (other.contains(el)) {
+          if (!isUserQueryTagElement(el) && !shouldPreferChildOverParent(other, el)) {
+            addExcluded(el, "duplicate-child");
+            if (lastUserPromptLeakDebug && isUserLikeForLeakTracking(el, root)) {
+              lastUserPromptLeakDebug.suppressedChains.push({
+                reason: "dedupe-duplicate-child",
+                suppressedSelfPreview: previewElText(el, 100),
+                suppressedByPreview: previewElText(other, 100),
+                suppressedTag: el.tagName,
+                keptAtomTag: other.tagName
+              });
+            }
+            return false;
+          }
+        }
+        if (!el.contains(other) && !other.contains(el) && areBlocksTextuallyRedundant(el, other)) {
+          const elLen = (el.textContent || "").length;
+          const otherLen = (other.textContent || "").length;
+          if (elLen <= otherLen) {
+            addExcluded(el, "duplicate-sibling");
+            if (lastUserPromptLeakDebug && isUserLikeForLeakTracking(el, root)) {
+              lastUserPromptLeakDebug.suppressedChains.push({
+                reason: "dedupe-duplicate-sibling",
+                suppressedSelfPreview: previewElText(el, 100),
+                suppressedByPreview: previewElText(other, 100),
+                suppressedTag: el.tagName,
+                keptAtomTag: other.tagName
+              });
+            }
+            return false;
+          }
+        }
+      }
+      return true;
+    });
+
+    return {
+      kept,
+      excluded,
+      prunedUserLikeCandidates,
+      tooShortSkippedForHighTrustUserCount
+    };
+  }
+
+  /**
+   * 診斷專用：是否「肉眼上可能像 user prompt」。
+   * 不影響 messageType / prune，僅供 console 與 keptBlocksPreview 標記。
+   */
+  function computeLooksUserLikeForDiagnostic(node, allKept) {
+    if (!node || !(node instanceof HTMLElement)) return false;
+
+    if (node.querySelector("pre, table, blockquote")) return false;
+
+    const listItems = node.querySelectorAll("ul li, ol li").length;
+    if (listItems >= 3) return false;
+
+    if (node.querySelectorAll("pre").length > 0) return false;
+
+    const codeEls = node.querySelectorAll("code");
+    if (codeEls.length > 2) return false;
+
+    const textLen = (node.textContent || "").trim().length;
+    if (textLen < 15 || textLen > 520) return false;
+
+    const paragraphCount = node.querySelectorAll("p").length;
+    const isSimpleStructure =
+      paragraphCount <= 3 && listItems < 2 && codeEls.length <= 1;
+
+    const root = findConversationRootContainer();
+    if (!root || !root.getBoundingClientRect) return false;
+
+    const rootRect = root.getBoundingClientRect();
+    const rootWidth = rootRect.width || 1;
+    const nodeRect = node.getBoundingClientRect();
+    const widthRatio = nodeRect.width / (rootWidth || 1);
+    const isNarrow = widthRatio < 0.62;
+    const isCardLike = isNarrow && nodeRect.height < rootRect.height * 0.28;
+
+    let hasLargeNextSibling = false;
+    if (Array.isArray(allKept) && allKept.length > 0) {
+      const idx = allKept.indexOf(node);
+      if (idx >= 0 && idx < allKept.length - 1) {
+        const next = allKept[idx + 1];
+        if (next && next.getBoundingClientRect) {
+          const nextRect = next.getBoundingClientRect();
+          const nextTextLen = (next.textContent || "").trim().length;
+          if (
+            nextRect.height > nodeRect.height * 1.35 ||
+            nextTextLen > Math.max(textLen * 1.7, 100)
+          ) {
+            hasLargeNextSibling = true;
+          }
+        }
+      }
+    }
+
+    try {
+      const extLinks = node.querySelectorAll('a[href^="http"], a[href^="//"]');
+      if (extLinks.length >= 8) return false;
+      if (node.querySelectorAll("sup").length >= 5) return false;
+    } catch (_) {}
+
+    let score = 0;
+    if (textLen < 300) score += 2;
+    else if (textLen < 450) score += 1;
+    if (isSimpleStructure) score += 2;
+    if (isNarrow) score += 1;
+    if (isCardLike) score += 1;
+    if (hasLargeNextSibling && textLen < 480) score += 2;
+
+    return (
+      score >= 5 ||
+      (score >= 4 && textLen < 360) ||
+      (hasLargeNextSibling && isSimpleStructure && textLen < 420)
+    );
+  }
+
+  /** 相對於本輪 kept 清單的層級（診斷用）。 */
+  function getHierarchyLevelForKept(node, allKept) {
+    const hasChildInKept = allKept.some((o) => o !== node && node.contains(o));
+    const hasParentInKept = allKept.some((o) => o !== node && o.contains(node));
+    if (hasChildInKept && hasParentInKept) return "mid";
+    if (hasChildInKept) return "parent";
+    if (hasParentInKept) return "mid";
+    return "leaf";
+  }
+
+  function buildKeptBlocksPreview(kept) {
+    const root = findConversationRootContainer();
+    return kept.map((node, index) => {
+      const d = detectMessageTypeWithDetails(node, kept);
+      const text = (node.textContent || "").trim().replace(/\s+/g, " ");
+      const looksUserLike = computeLooksUserLikeForDiagnostic(node, kept);
+      const meta = sidebarNodeKeptMeta.get(node) || {};
+      const containsMixed = containsUserAndGeminiMixedText(node);
+      const stillTurnWrapper = root ? isConversationTurnWrapper(node, root) : false;
+      return {
+        index,
+        tag: node.tagName,
+        class: (node.className && String(node.className).slice(0, 60)) || "",
+        textLen: text.length,
+        type: d.type,
+        messageType: d.type,
+        textPreview: text.slice(0, 80),
+        scoreUser: d.userScore,
+        scoreGemini: d.geminiScore,
+        selectedReason: d.selectedReason,
+        sourceSignal: inferSourceSignalForKeptPreview(node, d.selectedReason),
+        depth: root ? getDepthFromConversationRoot(node, root) : null,
+        ancestorSuppressed: meta.ancestorSuppressed === true,
+        looksUserLike,
+        isTurnWrapper: stillTurnWrapper,
+        containsMixedUserGeminiText: containsMixed,
+        atomicChildCount: meta.atomicChildCount ?? 0,
+        keptReason: meta.keptReason || "direct-candidate",
+        hierarchyLevel: getHierarchyLevelForKept(node, kept)
+      };
+    });
+  }
+
+  /**
+   * Selector -> merge -> prune 管線。
+   * 不再「命中一組就整組回傳」，改為收集所有 selector 候選、合併去重、prune 後回傳。
+   */
+  function finalizeUserPromptLeakDebug(root, mergedAfterHighTrust, mergedAfterExpand, kept, excluded) {
+    if (!lastUserPromptLeakDebug || !root) return;
+    const keptSet = new Set(kept);
+    const mergedHS = new Set(mergedAfterHighTrust);
+    const mergedEX = new Set(mergedAfterExpand);
+    let uq = [];
+    try {
+      uq = Array.from(root.querySelectorAll("user-query"));
+    } catch (_) {}
+
+    lastUserPromptLeakDebug.userQueryCandidates = uq.map((el) => {
+      const tl = (el.textContent || "").trim().length;
+      const dp = getDepthFromConversationRoot(el, root);
+      const inMerged = mergedHS.has(el);
+      const inExpanded = mergedEX.has(el);
+      const inKept = keptSet.has(el);
+      let notKeptReason = null;
+      if (!inKept) {
+        if (!inMerged) notKeptReason = "not-in-merged-after-high-trust";
+        else if (!inExpanded) notKeptReason = "not-in-merged-after-expand";
+        else {
+          const hit = excluded.find((x) => x.el === el);
+          notKeptReason = hit ? hit.reason : "prune-unknown-not-in-excluded";
+        }
+      }
+      return {
+        textPreview: previewElText(el, 100),
+        textLen: tl,
+        depth: dp,
+        inMerged,
+        inExpanded,
+        inKept,
+        notKeptReason
+      };
+    });
+  }
+
+  function findMessageElements() {
+    const root = findConversationRootContainer();
+    if (!root) {
+      resetUserPromptLeakDebug();
+      return [];
+    }
+
+    sidebarNodeKeptMeta = new WeakMap();
+    lastTurnWrapperStats = {
+      turnWrappersDetected: 0,
+      turnWrappersExtracted: 0,
+      atomicUnitsExtractedCount: 0
+    };
+    resetUserPromptLeakDebug();
 
     const strategies = [
-      () => Array.from(main.querySelectorAll("[data-message-id]")),
+      () => Array.from(root.querySelectorAll("[data-message-id]")),
       () =>
         Array.from(
-          main.querySelectorAll(
+          root.querySelectorAll(
             "[data-qa='message'], [data-qa='conversation-turn']"
           )
         ),
       () =>
         Array.from(
-          main.querySelectorAll(
+          root.querySelectorAll(
             "[role='listitem'][data-author], [role='listitem'][data-message-author]"
           )
         ),
-      () => Array.from(main.querySelectorAll("article"))
+      () => Array.from(root.querySelectorAll("article"))
     ];
 
     const strategyLabels = [
@@ -526,35 +2237,611 @@ const SidebarNavigationModule = (() => {
     ];
 
     const seen = new Set();
-    const messages = [];
-
+    const selectorCounts = {};
     for (let si = 0; si < strategies.length; si++) {
       const nodes = strategies[si]();
+      selectorCounts[strategyLabels[si]] = nodes.length;
       for (const node of nodes) {
         if (!node || !(node instanceof HTMLElement)) continue;
         if (seen.has(node)) continue;
         seen.add(node);
-        messages.push(node);
-      }
-      if (messages.length > 0) {
-        lastStrategy = strategyLabels[si];
-        console.info(`[GRA][sidebar] selector used: ${strategyLabels[si]}, found: ${messages.length}`);
-        return messages;
       }
     }
 
-    const fallback = runFallbackScan(main);
-    if (fallback.length > 0) {
-      lastStrategy = "fallback-text-block-scan";
-      console.info(
-        `[GRA][sidebar] selector used: fallback block scan, found: ${fallback.length}`
+    let merged = Array.from(seen);
+    const documentOrder = (a, b) => {
+      const pos = a.compareDocumentPosition(b);
+      if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+      if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+      return 0;
+    };
+    merged.sort(documentOrder);
+
+    const highTrustMerge = mergeHighTrustDomTagsIntoCandidates(root, merged);
+    merged = highTrustMerge.merged;
+    selectorCounts["high-trust-dom-tags"] = highTrustMerge.highTrustAtomCount;
+
+    if (merged.length === 0) {
+      const taggedOnly = collectHighTrustDomTaggedNodes(root);
+      const atomsOnly = keepDeepestExclusiveInSet(taggedOnly.map((t) => t.el));
+      if (atomsOnly.length > 0) {
+        atomsOnly.forEach((hel) => {
+          const hit = taggedOnly.find((x) => x.el === hel);
+          sidebarNodeKeptMeta.set(hel, {
+            sourceSignal: hit?.sourceSignal || (isUserQueryTagElement(hel) ? "user-query-tag" : "model-component-tag"),
+            ancestorSuppressed: true,
+            keptReason: "high-trust-dom-tag-only"
+          });
+        });
+        merged = atomsOnly.sort(documentOrder);
+        selectorCounts["high-trust-dom-tags"] = atomsOnly.length;
+      }
+    }
+
+    const mergedAfterHighTrust = merged.slice();
+    merged = expandTurnWrappersInCandidateList(merged, root);
+    const mergedAfterExpand = merged.slice();
+
+    if (merged.length === 0) {
+      let fallback = runFallbackScan(root);
+      if (fallback.length > 0) {
+        fallback = expandTurnWrappersInCandidateList(fallback, root);
+        lastStrategy = "fallback-text-block-scan";
+        let tooShortSkippedForHighTrustUserCount = 0;
+        let pruneOut = pruneMessageElementCandidates(fallback, root);
+        let { kept, excluded, prunedUserLikeCandidates } = pruneOut;
+        tooShortSkippedForHighTrustUserCount += pruneOut.tooShortSkippedForHighTrustUserCount || 0;
+        let rescueTriggered = false;
+        let rescueCandidateCount = 0;
+        let rescueKeptCount = 0;
+        let singleCandidateReason = null;
+
+        if (fallback.length === 1 && kept.length === 0) {
+          const single = fallback[0];
+          const singleExcluded = excluded.find((x) => x.el === single);
+          singleCandidateReason = singleExcluded?.reason || "unknown";
+          const singleIsHistoryWrapper = isHistoryWrapperContainer(single);
+          if (
+            singleIsHistoryWrapper ||
+            singleExcluded?.reason === "control-heavy" ||
+            singleExcluded?.reason === "history-wrapper-empty"
+          ) {
+            const extracted =
+              singleIsHistoryWrapper || singleExcluded?.reason === "history-wrapper-empty"
+                ? extractMessageLikeDescendantsFromHistoryWrapper(single, root)
+                : isHistoryWrapperContainer(single)
+                  ? extractMessageLikeDescendantsFromHistoryWrapper(single, root)
+                  : extractMessageLikeDescendantsFromWrapper(single, root);
+            if (extracted.length > 0) {
+              rescueTriggered = true;
+              rescueCandidateCount = extracted.length;
+              const rescueResult = pruneMessageElementCandidates(extracted, root);
+              tooShortSkippedForHighTrustUserCount +=
+                rescueResult.tooShortSkippedForHighTrustUserCount || 0;
+              prunedUserLikeCandidates = prunedUserLikeCandidates.concat(rescueResult.prunedUserLikeCandidates || []);
+              if (rescueResult.kept.length > 0) {
+                kept = rescueResult.kept;
+                rescueKeptCount = kept.length;
+              }
+            }
+          } else if (singleExcluded?.reason === "wrapper") {
+            const extracted = extractMessageLikeDescendantsFromWrapper(single, root);
+            rescueTriggered = true;
+            rescueCandidateCount = extracted.length;
+            if (extracted.length > 0) {
+              const rescueResult = pruneMessageElementCandidates(extracted, root);
+              tooShortSkippedForHighTrustUserCount +=
+                rescueResult.tooShortSkippedForHighTrustUserCount || 0;
+              prunedUserLikeCandidates = prunedUserLikeCandidates.concat(rescueResult.prunedUserLikeCandidates || []);
+              if (rescueResult.kept.length > 0) {
+                kept = rescueResult.kept;
+                rescueKeptCount = kept.length;
+              }
+            }
+          } else if (singleExcluded?.reason === "near-composer" && (single.textContent || "").trim().length >= 100 && !isControlHeavyBlock(single)) {
+            rescueTriggered = true;
+            kept = [single];
+            rescueKeptCount = 1;
+          } else if (singleExcluded?.reason === "too-short" && (single.textContent || "").trim().length >= 15 && !isControlHeavyBlock(single) && !isNearComposerRegion(single, root)) {
+            rescueTriggered = true;
+            kept = [single];
+            rescueKeptCount = 1;
+          }
+        }
+
+        const fallbackCounts = { gemini: 0, user: 0, unknown: 0 };
+        kept.forEach((n) => {
+          const t = detectMessageType(n, kept);
+          fallbackCounts[t] = (fallbackCounts[t] || 0) + 1;
+        });
+
+        const fallbackSingle = fallback.length === 1 ? fallback[0] : null;
+        const keptBlocksPreview = buildKeptBlocksPreview(kept);
+        const recoveredUserCountFromTooShort = computeRecoveredUserCountFromTooShort(kept, root);
+        finalizeUserPromptLeakDebug(root, [], fallback.slice(), kept, excluded);
+        emitSidebarDebug({
+          root,
+          selectorCounts,
+          mergedCount: fallback.length,
+          pruneCount: kept.length,
+          strategy: lastStrategy,
+          excludedReasons: excluded.map(({ reason }) => reason),
+          usedFallback: true,
+          rescueTriggered,
+          rescueCandidateCount,
+          rescueKeptCount,
+          singleCandidateReason: fallback.length === 1 && kept.length === 0 ? singleCandidateReason : null,
+          singleCandidate: fallbackSingle,
+          singleCandidateIsHistoryWrapper: fallbackSingle ? isHistoryWrapperContainer(fallbackSingle) : null,
+          historyWrapperDescendantCount: rescueTriggered ? rescueCandidateCount : null,
+          historyWrapperKeptCount: rescueTriggered ? rescueKeptCount : null,
+          typeCounts: fallbackCounts,
+          keptBlocksPreview,
+          prunedUserLikeCandidates,
+          tooShortSkippedForHighTrustUserCount,
+          recoveredUserCountFromTooShort,
+          turnWrappersDetected: lastTurnWrapperStats.turnWrappersDetected,
+          turnWrappersExtracted: lastTurnWrapperStats.turnWrappersExtracted,
+          atomicUnitsExtractedCount: lastTurnWrapperStats.atomicUnitsExtractedCount
+        });
+        return kept;
+      }
+      lastStrategy = "none";
+      finalizeUserPromptLeakDebug(root, [], [], [], []);
+      emitSidebarDebug({
+        root,
+        selectorCounts,
+        mergedCount: 0,
+        pruneCount: 0,
+        strategy: lastStrategy,
+        usedFallback: true,
+        tooShortSkippedForHighTrustUserCount: 0,
+        recoveredUserCountFromTooShort: 0,
+        prunedUserLikeCandidates: [],
+        turnWrappersDetected: lastTurnWrapperStats.turnWrappersDetected,
+        turnWrappersExtracted: lastTurnWrapperStats.turnWrappersExtracted,
+        atomicUnitsExtractedCount: lastTurnWrapperStats.atomicUnitsExtractedCount
+      });
+      return [];
+    }
+
+    lastStrategy = Object.entries(selectorCounts)
+      .filter(([, n]) => n > 0)
+      .map(([k, n]) => `${k}:${n}`)
+      .join(", ") || "merged";
+
+    let tooShortSkippedForHighTrustUserCount = 0;
+    let pruneMain = pruneMessageElementCandidates(merged, root);
+    let { kept, excluded, prunedUserLikeCandidates } = pruneMain;
+    tooShortSkippedForHighTrustUserCount += pruneMain.tooShortSkippedForHighTrustUserCount || 0;
+    let rescueTriggered = false;
+    let rescueCandidateCount = 0;
+    let rescueKeptCount = 0;
+    let singleCandidateReason = null;
+
+    if (merged.length === 1 && kept.length === 0) {
+      const single = merged[0];
+      const singleExcluded = excluded.find((x) => x.el === single);
+      singleCandidateReason = singleExcluded?.reason || "unknown";
+
+      const singleIsHistoryWrapper = isHistoryWrapperContainer(single);
+      if (
+        singleIsHistoryWrapper ||
+        singleExcluded?.reason === "control-heavy" ||
+        singleExcluded?.reason === "history-wrapper-empty"
+      ) {
+        const extracted =
+          singleIsHistoryWrapper || singleExcluded?.reason === "history-wrapper-empty"
+            ? extractMessageLikeDescendantsFromHistoryWrapper(single, root)
+            : isHistoryWrapperContainer(single)
+              ? extractMessageLikeDescendantsFromHistoryWrapper(single, root)
+              : extractMessageLikeDescendantsFromWrapper(single, root);
+        if (extracted.length > 0) {
+          rescueTriggered = true;
+          rescueCandidateCount = extracted.length;
+          const rescueResult = pruneMessageElementCandidates(extracted, root);
+          tooShortSkippedForHighTrustUserCount +=
+            rescueResult.tooShortSkippedForHighTrustUserCount || 0;
+          prunedUserLikeCandidates = prunedUserLikeCandidates.concat(rescueResult.prunedUserLikeCandidates || []);
+          if (rescueResult.kept.length > 0) {
+            kept = rescueResult.kept;
+            rescueKeptCount = kept.length;
+          }
+        }
+      } else if (singleExcluded?.reason === "wrapper") {
+        const extracted = extractMessageLikeDescendantsFromWrapper(single, root);
+        rescueTriggered = true;
+        rescueCandidateCount = extracted.length;
+        if (extracted.length > 0) {
+          const rescueResult = pruneMessageElementCandidates(extracted, root);
+          tooShortSkippedForHighTrustUserCount +=
+            rescueResult.tooShortSkippedForHighTrustUserCount || 0;
+          prunedUserLikeCandidates = prunedUserLikeCandidates.concat(rescueResult.prunedUserLikeCandidates || []);
+          if (rescueResult.kept.length > 0) {
+            kept = rescueResult.kept;
+            rescueKeptCount = kept.length;
+          }
+        }
+      } else if (singleExcluded?.reason === "near-composer") {
+        const textLen = (single.textContent || "").trim().length;
+        if (textLen >= 100 && !isControlHeavyBlock(single)) {
+          rescueTriggered = true;
+          kept = [single];
+          rescueKeptCount = 1;
+        }
+      } else if (singleExcluded?.reason === "too-short") {
+        const textLen = (single.textContent || "").trim().length;
+        if (textLen >= 15 && !isControlHeavyBlock(single) && !isNearComposerRegion(single, root)) {
+          rescueTriggered = true;
+          kept = [single];
+          rescueKeptCount = 1;
+        }
+      }
+    }
+
+    const counts = { gemini: 0, user: 0, unknown: 0 };
+    kept.forEach((n) => {
+      const t = detectMessageType(n, kept);
+      counts[t] = (counts[t] || 0) + 1;
+    });
+    const singleCandidate = merged.length === 1 ? merged[0] : null;
+    const singleCandidateIsHistoryWrapper = singleCandidate ? isHistoryWrapperContainer(singleCandidate) : null;
+    const keptBlocksPreview = buildKeptBlocksPreview(kept);
+    const recoveredUserCountFromTooShort = computeRecoveredUserCountFromTooShort(kept, root);
+
+    finalizeUserPromptLeakDebug(root, mergedAfterHighTrust, mergedAfterExpand, kept, excluded);
+
+    emitSidebarDebug({
+      root,
+      selectorCounts,
+      mergedCount: merged.length,
+      pruneCount: kept.length,
+      strategy: lastStrategy,
+      typeCounts: counts,
+      excludedReasons: excluded.map(({ reason }) => reason),
+      usedFallback: false,
+      rescueTriggered,
+      rescueCandidateCount,
+      rescueKeptCount,
+      singleCandidateReason: merged.length === 1 && kept.length === 0 ? singleCandidateReason : null,
+      singleCandidate,
+      singleCandidateIsHistoryWrapper,
+      historyWrapperDescendantCount: rescueTriggered ? rescueCandidateCount : null,
+      historyWrapperKeptCount: rescueTriggered ? rescueKeptCount : null,
+      keptBlocksPreview,
+      prunedUserLikeCandidates,
+      tooShortSkippedForHighTrustUserCount,
+      recoveredUserCountFromTooShort,
+      turnWrappersDetected: lastTurnWrapperStats.turnWrappersDetected,
+      turnWrappersExtracted: lastTurnWrapperStats.turnWrappersExtracted,
+      atomicUnitsExtractedCount: lastTurnWrapperStats.atomicUnitsExtractedCount
+    });
+
+    return kept;
+  }
+
+  let lastSidebarDebugInfo = null;
+
+  /**
+   * 判定 zero blocks 的原因。
+   */
+  function computeZeroBlockReason(info) {
+    const { mergedCount, pruneCount, excludedCounts, usedFallback, chosenRootTextLength } = info;
+    if (mergedCount === 0) {
+      if (chosenRootTextLength != null && chosenRootTextLength < 100) {
+        return "root-has-no-message-like-content";
+      }
+      return usedFallback ? "fallback-empty" : "selectors-empty";
+    }
+    if (pruneCount === 0) {
+      const counts = excludedCounts || {};
+      const total = Object.values(counts).reduce((a, b) => a + b, 0);
+      if (total > 0 && counts["near-composer"] === total) return "all-near-composer";
+      if (total > 0 && counts["control-heavy"] === total) return "all-control-heavy";
+      return "all-pruned";
+    }
+    return null;
+  }
+
+  /**
+   * DevTools 可讀逐筆證據：typeCounts、kept 摘要、pruned user-like、A/B 清單。
+   * 僅診斷輸出，不改 Sidebar 行為。
+   */
+  function logReadableSidebarScanEvidence(info) {
+    const typeCounts = info.typeCounts
+      ? { ...info.typeCounts }
+      : { gemini: 0, user: 0, unknown: 0 };
+    console.info("[GRA][sidebar][evidence] —— 1) typeCounts ——", typeCounts);
+    console.info("[GRA][sidebar][evidence] turn wrappers", {
+      turnWrappersDetected: info.turnWrappersDetected ?? 0,
+      turnWrappersExtracted: info.turnWrappersExtracted ?? 0,
+      atomicUnitsExtractedCount: info.atomicUnitsExtractedCount ?? 0
+    });
+
+    const leak = lastUserPromptLeakDebug;
+    if (leak) {
+      const uq = leak.userQueryCandidates || [];
+      const missingUq = uq.filter((r) => !r.inKept);
+      console.info("[GRA][sidebar][evidence] user prompt leak", {
+        userQueryInDom: uq.length,
+        userQueryNotKept: missingUq.length,
+        userLikeNotKeptRows: (leak.userLikeNotKept || []).length,
+        suppressedChains: (leak.suppressedChains || []).length
+      });
+      if (uq.length > 0) {
+        console.info("[GRA][sidebar][evidence] A) user-query candidates");
+        console.table(
+          uq.map((r) => ({
+            textLen: r.textLen,
+            depth: r.depth,
+            inMerged: r.inMerged,
+            inExpanded: r.inExpanded,
+            inKept: r.inKept,
+            notKeptReason: r.notKeptReason,
+            textPreview: r.textPreview
+          }))
+        );
+      }
+      const ulnk = leak.userLikeNotKept || [];
+      if (ulnk.length > 0) {
+        console.info("[GRA][sidebar][evidence] B) user-like but not kept");
+        console.table(ulnk.slice(0, 25));
+        if (ulnk.length > 25) {
+          console.info(`[GRA][sidebar][evidence] … ${ulnk.length - 25} more userLikeNotKept rows`);
+        }
+      }
+      const sup = leak.suppressedChains || [];
+      if (sup.length > 0) {
+        console.info("[GRA][sidebar][evidence] C) suppressed by ancestor/dedupe");
+        console.table(sup.slice(0, 20));
+        if (sup.length > 20) {
+          console.info(`[GRA][sidebar][evidence] … ${sup.length - 20} more suppressedChains`);
+        }
+      }
+    }
+
+    const preview = Array.isArray(info.keptBlocksPreview) ? info.keptBlocksPreview : [];
+    const previewHead = preview.slice(0, 20);
+    console.info(
+      `[GRA][sidebar][evidence] —— 2) keptBlocksPreview (showing ${previewHead.length} of ${preview.length}, cap 20) ——`
+    );
+    if (previewHead.length > 0) {
+      console.table(
+        previewHead.map((row) => ({
+          index: row.index,
+          tag: row.tag,
+          depth: row.depth,
+          sourceSignal: row.sourceSignal,
+          ancestorSuppressed: row.ancestorSuppressed,
+          textLen: row.textLen,
+          hierarchyLevel: row.hierarchyLevel,
+          isTurnWrapper: row.isTurnWrapper,
+          containsMixed: row.containsMixedUserGeminiText,
+          atomicChildCount: row.atomicChildCount,
+          keptReason: row.keptReason,
+          looksUserLike: row.looksUserLike,
+          messageType: row.messageType ?? row.type,
+          scoreUser: row.scoreUser,
+          scoreGemini: row.scoreGemini,
+          classificationReason: row.selectedReason,
+          textPreview: row.textPreview
+        }))
       );
-      return fallback;
+    } else {
+      console.info("[GRA][sidebar][evidence] keptBlocksPreview: [] (empty array)");
     }
 
-    lastStrategy = "none";
-    console.info("[GRA][sidebar] No message elements found for current page structure.");
-    return messages;
+    const pruned = Array.isArray(info.prunedUserLikeCandidates)
+      ? info.prunedUserLikeCandidates
+      : [];
+
+    console.info(
+      `[GRA][sidebar][evidence] —— 3) prunedUserLikeCandidates (first 10 of ${pruned.length}) ——`
+    );
+    if (pruned.length === 0) {
+      console.info("[GRA][sidebar][evidence] prunedUserLikeCandidates: [] (empty array)");
+    } else {
+      console.table(
+        pruned.slice(0, 10).map((r) => ({
+          textPreview: r.textPreview,
+          excludedReason: r.excludedReason,
+          textLen: r.textLen,
+          class: r.class
+        }))
+      );
+      if (pruned.length > 10) {
+        console.info(
+          `[GRA][sidebar][evidence] … ${pruned.length - 10} additional pruned user-like rows (see list B).`
+        );
+      }
+    }
+
+    const prunedTooShortRem = pruned.filter((r) => r.excludedReason === "too-short").length;
+    console.info("[GRA][sidebar][evidence] —— too-short 高可信放寬 / 殘量 ——", {
+      tooShortSkippedForHighTrustUserCount: info.tooShortSkippedForHighTrustUserCount ?? 0,
+      recoveredUserCountFromTooShort: info.recoveredUserCountFromTooShort ?? 0,
+      prunedUserLikeTooShortRemaining: prunedTooShortRem,
+      prunedUserLikeTotal: pruned.length
+    });
+
+    const userLikeKept = preview.filter((r) => r.looksUserLike);
+    console.info(
+      `[GRA][sidebar][evidence] —— A) user-like kept (looksUserLike=true, ${userLikeKept.length}) ——`
+    );
+    if (userLikeKept.length > 0) {
+      console.table(
+        userLikeKept.map((row) => ({
+          index: row.index,
+          textPreview: row.textPreview,
+          messageType: row.messageType ?? row.type,
+          scoreUser: row.scoreUser,
+          scoreGemini: row.scoreGemini,
+          classificationReason: row.selectedReason
+        }))
+      );
+    } else {
+      console.info(
+        "[GRA][sidebar][evidence] A) (none — looksUserLike all false or kept empty)"
+      );
+    }
+
+    console.info(
+      `[GRA][sidebar][evidence] —— B) pruned user-like candidates (all ${pruned.length}) ——`
+    );
+    if (pruned.length > 0) {
+      console.table(
+        pruned.map((r) => ({
+          textPreview: r.textPreview,
+          excludedReason: r.excludedReason,
+          textLen: r.textLen,
+          class: r.class
+        }))
+      );
+    } else {
+      console.info("[GRA][sidebar][evidence] B) [] (empty array)");
+    }
+  }
+
+  /**
+   * Debug 輸出：儲存 lastSidebarDebugInfo、寫入 DOM 供 page context 讀取、自動 console 輸出。
+   */
+  function emitSidebarDebug(info) {
+    const pageType = typeof detectPageType === "function" ? detectPageType() : "unknown";
+    const excludedReasons = info.excludedReasons || [];
+    const excludedCounts = {};
+    excludedReasons.forEach((r) => {
+      excludedCounts[r] = (excludedCounts[r] || 0) + 1;
+    });
+    const chosenRootTextLength = info.root ? (info.root.textContent || "").trim().length : 0;
+    const zeroBlockReason = info.pruneCount === 0 ? computeZeroBlockReason({
+      mergedCount: info.mergedCount,
+      pruneCount: info.pruneCount,
+      excludedCounts,
+      usedFallback: info.usedFallback,
+      chosenRootTextLength
+    }) : null;
+
+    const chosenRootTag = info.root?.tagName || null;
+    const chosenRootClass = info.root?.className?.slice?.(0, 80) || null;
+
+    const singleCandidateTag = info.singleCandidate?.tagName || null;
+    const singleCandidateClass = info.singleCandidate?.className?.slice?.(0, 60) || null;
+    const singleCandidateTextLength = info.singleCandidate ? (info.singleCandidate.textContent || "").trim().length : null;
+
+    const prunedListForTooShort = info.prunedUserLikeCandidates || [];
+    const prunedUserLikeTooShortRemaining = prunedListForTooShort.filter(
+      (r) => r.excludedReason === "too-short"
+    ).length;
+
+    lastSidebarDebugInfo = {
+      pageType,
+      firstMessageFound: lastFirstMessageInfo.found,
+      firstMessageTag: lastFirstMessageInfo.tag,
+      firstMessageClass: lastFirstMessageInfo.class,
+      firstMessageReason: lastFirstMessageInfo.reason,
+      chosenRootTag,
+      chosenRootClass,
+      chosenRootTextLength,
+      rootCandidateCount: lastRootCandidates.length,
+      rootCandidates: lastRootCandidates,
+      rootChosenReason: lastRootChosenReason,
+      selectorCounts: info.selectorCounts,
+      mergedCount: info.mergedCount,
+      pruneCount: info.pruneCount,
+      excludedCounts,
+      zeroBlockReason,
+      typeCounts: info.typeCounts,
+      singleCandidateTag,
+      singleCandidateClass,
+      singleCandidateTextLength,
+      singleCandidateReason: info.singleCandidateReason,
+      singleCandidateIsHistoryWrapper: info.singleCandidateIsHistoryWrapper,
+      historyWrapperDescendantCount: info.historyWrapperDescendantCount,
+      historyWrapperKeptCount: info.historyWrapperKeptCount,
+      rescueTriggered: info.rescueTriggered,
+      rescueCandidateCount: info.rescueCandidateCount,
+      rescueKeptCount: info.rescueKeptCount,
+      allCount: info.typeCounts
+        ? (info.typeCounts.gemini || 0) + (info.typeCounts.user || 0) + (info.typeCounts.unknown || 0)
+        : null,
+      geminiCount: info.typeCounts?.gemini ?? null,
+      userCount: info.typeCounts?.user ?? null,
+      unknownCount: info.typeCounts?.unknown ?? null,
+      keptBlocksPreview: info.keptBlocksPreview || [],
+      prunedUserLikeCandidates: info.prunedUserLikeCandidates || [],
+      tooShortSkippedForHighTrustUserCount: info.tooShortSkippedForHighTrustUserCount ?? 0,
+      recoveredUserCountFromTooShort: info.recoveredUserCountFromTooShort ?? 0,
+      prunedUserLikeTooShortRemaining,
+      turnWrappersDetected: info.turnWrappersDetected ?? 0,
+      turnWrappersExtracted: info.turnWrappersExtracted ?? 0,
+      atomicUnitsExtractedCount: info.atomicUnitsExtractedCount ?? 0,
+      userPromptLeakDebug: lastUserPromptLeakDebug
+        ? {
+            userQueryCandidates: lastUserPromptLeakDebug.userQueryCandidates,
+            userLikeNotKept: lastUserPromptLeakDebug.userLikeNotKept,
+            suppressedChains: lastUserPromptLeakDebug.suppressedChains
+          }
+        : null
+    };
+
+    try {
+      document.documentElement.dataset.graSidebarDebug = JSON.stringify(lastSidebarDebugInfo);
+    } catch (_) {}
+
+    if (info.pruneCount === 0) {
+      console.info("[GRA][sidebar][debug] zero blocks", {
+        pageType,
+        firstMessageFound: lastFirstMessageInfo.found,
+        firstMessageTag: lastFirstMessageInfo.tag,
+        firstMessageClass: lastFirstMessageInfo.class,
+        firstMessageReason: lastFirstMessageInfo.reason,
+        chosenRootTag,
+        chosenRootClass,
+        rootCandidateCount: lastRootCandidates.length,
+        rootCandidates: lastRootCandidates,
+        rootChosenReason: lastRootChosenReason,
+        selectorCounts: info.selectorCounts,
+        mergedCount: info.mergedCount,
+        pruneCount: info.pruneCount,
+        excludedCounts,
+        zeroBlockReason,
+        singleCandidateTag,
+        singleCandidateClass,
+        singleCandidateTextLength,
+        singleCandidateReason: info.singleCandidateReason,
+        singleCandidateIsHistoryWrapper: info.singleCandidateIsHistoryWrapper,
+        historyWrapperDescendantCount: info.historyWrapperDescendantCount,
+        historyWrapperKeptCount: info.historyWrapperKeptCount,
+        rescueTriggered: info.rescueTriggered,
+        rescueCandidateCount: info.rescueCandidateCount,
+        rescueKeptCount: info.rescueKeptCount,
+        turnWrappersDetected: info.turnWrappersDetected ?? 0,
+        turnWrappersExtracted: info.turnWrappersExtracted ?? 0,
+        atomicUnitsExtractedCount: info.atomicUnitsExtractedCount ?? 0,
+        tooShortSkippedForHighTrustUserCount: info.tooShortSkippedForHighTrustUserCount ?? 0,
+        recoveredUserCountFromTooShort: info.recoveredUserCountFromTooShort ?? 0,
+        prunedUserLikeTooShortRemaining
+      });
+    } else {
+      console.info("[GRA][sidebar][debug] blocks found", {
+        count: info.pruneCount,
+        typeCounts: info.typeCounts,
+        allCount: lastSidebarDebugInfo.allCount,
+        geminiCount: lastSidebarDebugInfo.geminiCount,
+        userCount: lastSidebarDebugInfo.userCount,
+        unknownCount: lastSidebarDebugInfo.unknownCount,
+        turnWrappersDetected: info.turnWrappersDetected ?? 0,
+        turnWrappersExtracted: info.turnWrappersExtracted ?? 0,
+        atomicUnitsExtractedCount: info.atomicUnitsExtractedCount ?? 0,
+        keptBlocksPreview: info.keptBlocksPreview,
+        prunedUserLikeCandidates: info.prunedUserLikeCandidates || [],
+        tooShortSkippedForHighTrustUserCount: info.tooShortSkippedForHighTrustUserCount ?? 0,
+        recoveredUserCountFromTooShort: info.recoveredUserCountFromTooShort ?? 0,
+        prunedUserLikeTooShortRemaining
+      });
+    }
+
+    logReadableSidebarScanEvidence(info);
   }
 
   /**
@@ -652,14 +2939,20 @@ const SidebarNavigationModule = (() => {
     }
 
     /**
-     * 父子去重：若父元素包含另一個命中元素，移除父元素，保留內層子元素。
-     * 這樣可以避免 sidebar 出現巢狀的重複大容器節點。
+     * 父子去重：綜合文本長度比、是否更像完整訊息單位，決定保留父或子。
+     * 不單純用 contains() 一律留子。
      */
     function deduplicateParentChild(els) {
       const set = new Set(els);
       return els.filter((el) => {
         for (const other of set) {
-          if (other !== el && el.contains(other)) return false;
+          if (other === el) continue;
+          if (el.contains(other)) {
+            if (shouldPreferChildOverParent(el, other)) return false;
+          }
+          if (other.contains(el)) {
+            if (!shouldPreferChildOverParent(other, el)) return false;
+          }
         }
         return true;
       });
@@ -689,6 +2982,9 @@ const SidebarNavigationModule = (() => {
    * 會清空舊項目並重新建立，但不會重複插入外層容器。
    */
   function rebuildNavigation() {
+    GraReadingPhase1Ux.clearFocusForRebuild();
+    GraReadingPhase1Ux.ensureCollapsedExpandClickDelegate();
+
     const messageElements = findMessageElements();
     if (!messageElements.length) {
       // 若找不到任何訊息，則隱藏整個側邊欄容器，以避免留下空白盒子。
@@ -717,10 +3013,26 @@ const SidebarNavigationModule = (() => {
       const id =
         node.getAttribute("data-gra-message-id") || `gra-message-${index + 1}`;
       node.setAttribute("data-gra-message-id", id);
+      GraReadingPhase1Ux.ensureGraMessage(node);
 
-      const msgType = detectMessageType(node);
+      const msgType = detectMessageType(node, messageElements);
       const label = buildLabelFromMessage(node, index);
       const tooltipData = buildTooltipContent(node, msgType);
+
+      const rowEl = document.createElement("div");
+      rowEl.className = "gra-sidebar-nav__item-row";
+
+      const collapseBtn = document.createElement("button");
+      collapseBtn.type = "button";
+      collapseBtn.className = "gra-sidebar-nav__item-collapse";
+      collapseBtn.textContent = "▶";
+      collapseBtn.title = "收合／展開此訊息（僅版面）";
+      collapseBtn.setAttribute("aria-label", "收合或展開此訊息");
+      collapseBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        GraReadingPhase1Ux.toggleCollapse(node);
+      });
 
       const itemEl = document.createElement("button");
       itemEl.type = "button";
@@ -735,21 +3047,17 @@ const SidebarNavigationModule = (() => {
       });
 
       itemEl.addEventListener("click", () => {
-        try {
-          node.scrollIntoView({
-            behavior: "smooth",
-            block: "center",
-            inline: "nearest"
-          });
-        } catch (error) {
-          node.scrollIntoView();
-        }
+        scrollToMessageTop(node, msgType);
+        GraReadingPhase1Ux.toggleFocus(node);
       });
 
-      listEl.appendChild(itemEl);
+      rowEl.appendChild(collapseBtn);
+      rowEl.appendChild(itemEl);
+      listEl.appendChild(rowEl);
       items.push({
         id,
         navEl: itemEl,
+        rowEl,
         targetEl: node,
         summary: tooltipData.summary,
         messageType: msgType
@@ -767,14 +3075,25 @@ const SidebarNavigationModule = (() => {
   /**
    * 以 debounce 方式排程重新掃描 DOM。
    */
+  /** 一般重新掃描延遲；串流時 childList 連續觸發會改用較長延遲，避免 findMessageElements 搶占主執行緒。 */
+  const RESCAN_DEBOUNCE_MS = 250;
+  const RESCAN_DEBOUNCE_STREAMING_MS = 750;
+  const RESCAN_BURST_THRESHOLD = 10;
+
   function scheduleRescan() {
     if (rescanTimer) {
       clearTimeout(rescanTimer);
     }
+    rescanMutationBurstWeight = Math.min(rescanMutationBurstWeight + 1, 80);
+    const debounceMs =
+      rescanMutationBurstWeight > RESCAN_BURST_THRESHOLD
+        ? RESCAN_DEBOUNCE_STREAMING_MS
+        : RESCAN_DEBOUNCE_MS;
     rescanTimer = setTimeout(() => {
       rescanTimer = null;
+      rescanMutationBurstWeight = 0;
       rebuildNavigation();
-    }, 250);
+    }, debounceMs);
   }
 
   /**
@@ -791,7 +3110,8 @@ const SidebarNavigationModule = (() => {
     let best = null;
 
     for (const item of items) {
-      if (item.navEl.style.display === "none") continue;
+      const shell = item.rowEl || item.navEl;
+      if (shell && shell.style.display === "none") continue;
       const rect = item.targetEl.getBoundingClientRect();
       if (rect.height === 0) continue;
 
@@ -841,20 +3161,20 @@ const SidebarNavigationModule = (() => {
   function startObserver() {
     if (observer) return;
 
-    const main =
-      document.querySelector("main[role='main']") ||
-      document.querySelector("main") ||
-      document.body;
-
-    if (!main) return;
+    // 盡量只監聽對話根（常為 chat scroll 容器），少監聽整個 main，降低與串流無關區塊的突變噪音。
+    const root = findConversationRootContainer();
+    const target =
+      root && root.nodeType === Node.ELEMENT_NODE ? root : document.body;
+    if (!target) return;
 
     observer = new MutationObserver(() => {
       scheduleRescan();
     });
 
-    observer.observe(main, {
+    observer.observe(target, {
       subtree: true,
       childList: true
+      // 不監聽 characterData / attributes，避免逐字元文字更新打爆 callback（多數由 childList 已足夠觸發重建）
     });
   }
 
@@ -870,6 +3190,316 @@ const SidebarNavigationModule = (() => {
       clearTimeout(rescanTimer);
       rescanTimer = null;
     }
+    rescanMutationBurstWeight = 0;
+  }
+
+  /**
+   * 開發用：收集最外層 turn wrapper 候選（不含被其他候選包住的內層）。
+   */
+  function collectOutermostTurnWrappersForInspect(root, maxWrappers) {
+    const candidates = [];
+    const seen = new Set();
+    try {
+      const nodes = root.querySelectorAll("div, section, article, [role='listitem']");
+      nodes.forEach((el) => {
+        if (seen.has(el)) return;
+        if (isConversationTurnWrapper(el, root)) {
+          candidates.push(el);
+          seen.add(el);
+        }
+      });
+    } catch (_) {}
+
+    const outermost = candidates.filter(
+      (w) => !candidates.some((o) => o !== w && o.contains(w))
+    );
+    outermost.sort((a, b) => {
+      const pos = a.compareDocumentPosition(b);
+      if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+      if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+      return 0;
+    });
+    return outermost.slice(0, maxWrappers);
+  }
+
+  /**
+   * 單節點摘要（供 DOM 探查；不影響 Sidebar 行為）。
+   */
+  function summarizeInspectNode(el, depth) {
+    const text = (el.textContent || "").trim();
+    const textLen = text.length;
+    const cn = el.className;
+    const className =
+      typeof cn === "string"
+        ? cn.slice(0, 140)
+        : String(cn?.baseVal ?? "").slice(0, 80);
+
+    const dataAttrs = {};
+    if (el.attributes) {
+      for (let i = 0; i < el.attributes.length; i++) {
+        const a = el.attributes[i];
+        if (a.name.startsWith("data-")) {
+          dataAttrs[a.name] = String(a.value).slice(0, 96);
+        }
+      }
+    }
+
+    const structural = {
+      hasP: !!el.querySelector(":scope p, p"),
+      hasPre: !!el.querySelector("pre"),
+      hasBlockquote: !!el.querySelector("blockquote"),
+      hasUlOl: !!el.querySelector("ul, ol"),
+      hasTable: !!el.querySelector("table"),
+      buttonCount: 0,
+      hasToolbarOrMenu:
+        !!el.querySelector("[role='toolbar'], [role='menu'], [role='menubar']"),
+      hasAvatarLike: !!el.querySelector(
+        'img[alt*="avatar" i], img[src*="googleusercontent"], [class*="avatar" i]'
+      ),
+      hasHeading: !!el.querySelector("h1,h2,h3,h4,h5,h6"),
+      hasCitationLike: !!el.querySelector(
+        "cite, sup, [class*='citation' i], [class*='source' i], [data-source]"
+      )
+    };
+    try {
+      structural.buttonCount = Math.min(el.querySelectorAll("button").length, 40);
+    } catch (_) {}
+
+    const hints = { likelyUser: [], likelyGemini: [] };
+
+    const classifyAuthorAttr = (raw) => {
+      const lower = (raw || "").toLowerCase();
+      if (/(^|[^a-z])(user|human|1)([^a-z]|$)/i.test(lower))
+        hints.likelyUser.push("attr-author-user");
+      if (/(model|assistant|gemini|2)/i.test(lower))
+        hints.likelyGemini.push("attr-author-model");
+    };
+
+    classifyAuthorAttr(
+      el.getAttribute("data-author") || el.getAttribute("data-message-author")
+    );
+    try {
+      el.querySelectorAll("[data-author], [data-message-author]").forEach((n) => {
+        classifyAuthorAttr(
+          n.getAttribute("data-author") || n.getAttribute("data-message-author")
+        );
+      });
+    } catch (_) {}
+
+    const dataQa = el.getAttribute("data-qa") || dataAttrs["data-qa"];
+    if (dataQa) {
+      if (/user|human|prompt|input|query|question/i.test(dataQa))
+        hints.likelyUser.push(`data-qa:${dataQa}`);
+      if (/model|assistant|response|output|answer|bot/i.test(dataQa))
+        hints.likelyGemini.push(`data-qa:${dataQa}`);
+    }
+
+    const tagU = el.tagName ? el.tagName.toUpperCase() : "";
+    if (tagU === "USER-QUERY") {
+      hints.likelyUser.push("tag:USER-QUERY");
+    }
+    if (isHighTrustModelComponentTagElement(el)) {
+      hints.likelyGemini.push(`tag:${tagU}`);
+    }
+
+    if (textLen > 0 && textLen < 420 && structural.hasP && !structural.hasPre) {
+      hints.likelyUser.push("heuristic-short+p-no-pre");
+    }
+    if (textLen > 550 && (structural.hasPre || structural.hasTable || structural.hasUlOl)) {
+      hints.likelyGemini.push("heuristic-long+rich-markup");
+    }
+
+    hints.likelyUser = [...new Set(hints.likelyUser)].slice(0, 12);
+    hints.likelyGemini = [...new Set(hints.likelyGemini)].slice(0, 12);
+
+    return {
+      depth,
+      tag: el.tagName,
+      className,
+      id: el.id ? el.id.slice(0, 80) : "",
+      role: el.getAttribute("role") || "",
+      ariaLabel: (el.getAttribute("aria-label") || "").slice(0, 100),
+      dataAttrs,
+      textLen,
+      textPreview: text.replace(/\s+/g, " ").slice(0, 96),
+      childElementCount: el.children.length,
+      structural,
+      hints
+    };
+  }
+
+  /**
+   * BFS 掃描 wrapper 子樹，收集帶訊號的節點（開發用）。
+   */
+  function bfsInspectTurnWrapperDescendants(wrapper, maxNodes) {
+    const results = [];
+    const queue = [{ el: wrapper, depth: 0 }];
+    const maxDepth = 14;
+
+    while (queue.length && results.length < maxNodes) {
+      const item = queue.shift();
+      const el = item.el;
+      const depth = item.depth;
+      if (!(el instanceof HTMLElement)) continue;
+      if (el.tagName === "SCRIPT" || el.tagName === "STYLE") continue;
+
+      if (depth > 0) {
+        const tl = (el.textContent || "").trim().length;
+        const summary = summarizeInspectNode(el, depth);
+        const hasSignal =
+          Object.keys(summary.dataAttrs).length > 0 ||
+          tl >= 28 ||
+          summary.role ||
+          summary.id ||
+          summary.structural.hasP ||
+          summary.structural.hasPre ||
+          summary.structural.hasUlOl ||
+          summary.hints.likelyUser.length > 0 ||
+          summary.hints.likelyGemini.length > 0;
+        if (hasSignal) results.push({ el, ...summary });
+      }
+
+      if (depth >= maxDepth) continue;
+      Array.from(el.children).forEach((child) => {
+        if (child instanceof HTMLElement) queue.push({ el: child, depth: depth + 1 });
+      });
+    }
+
+    return results;
+  }
+
+  /** inspect：user-only 清單收斂為「不含其他 user-only 子代的最深候選」。 */
+  function filterInspectHintsToDeepest(rows) {
+    return rows.filter(
+      (row) => !rows.some((other) => other !== row && row.el.contains(other.el))
+    );
+  }
+
+  function stripElFromInspectRow(row) {
+    const { el: _omit, ...rest } = row;
+    return rest;
+  }
+
+  /**
+   * 開發用：探查 turn wrapper 內 DOM 層級與 user/gemini 線索（不改 Sidebar 行為）。
+   * @param {{ maxWrappers?: number, maxDescendantsPerWrapper?: number }} [options]
+   */
+  function runTurnDomInspect(options) {
+    const opts = options || {};
+    const maxWrappers = Math.min(Math.max(opts.maxWrappers ?? 5, 1), 12);
+    const maxDesc = Math.min(Math.max(opts.maxDescendantsPerWrapper ?? 55, 12), 140);
+
+    const root = findConversationRootContainer();
+    if (!root) {
+      return {
+        ok: false,
+        error: "no-conversation-root",
+        generatedAt: new Date().toISOString()
+      };
+    }
+
+    let wrappers = collectOutermostTurnWrappersForInspect(root, maxWrappers);
+
+    if (wrappers.length === 0) {
+      const seen = new Set();
+      const merged = [];
+      [
+        () => Array.from(root.querySelectorAll("[data-message-id]")),
+        () =>
+          Array.from(
+            root.querySelectorAll("[data-qa='message'], [data-qa='conversation-turn']")
+          )
+      ].forEach((fn) => {
+        fn().forEach((n) => {
+          if (n && n instanceof HTMLElement && !seen.has(n)) {
+            seen.add(n);
+            merged.push(n);
+          }
+        });
+      });
+      const documentOrder = (a, b) => {
+        const pos = a.compareDocumentPosition(b);
+        if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+        if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+        return 0;
+      };
+      wrappers = merged
+        .filter(
+          (n) =>
+            containsUserAndGeminiMixedText(n) &&
+            (n.textContent || "").trim().length >= 400
+        )
+        .sort(documentOrder)
+        .slice(0, maxWrappers);
+    }
+
+    const report = {
+      ok: true,
+      generatedAt: new Date().toISOString(),
+      disclaimer:
+        "此物件僅反映「當下頁面」DOM。本環境無法代你讀取即時 Gemini；請在瀏覽器執行本函式取得真實結構。",
+      root: {
+        tag: root.tagName,
+        className:
+          typeof root.className === "string" ? root.className.slice(0, 120) : ""
+      },
+      turnWrapperCount: wrappers.length,
+      wrappers: []
+    };
+
+    wrappers.forEach((w, i) => {
+      const wtext = (w.textContent || "").trim();
+      const rawDesc = bfsInspectTurnWrapperDescendants(w, maxDesc);
+      const descendantCandidates = rawDesc.map((row) => stripElFromInspectRow(row));
+
+      const userOnlyRaw = rawDesc.filter(
+        (d) => d.hints.likelyUser.length > 0 && d.hints.likelyGemini.length === 0
+      );
+      const geminiOnlyRaw = rawDesc.filter(
+        (d) => d.hints.likelyGemini.length > 0 && d.hints.likelyUser.length === 0
+      );
+      const userOnly = filterInspectHintsToDeepest(userOnlyRaw);
+      const geminiOnly = filterInspectHintsToDeepest(geminiOnlyRaw);
+      const ambiguous = rawDesc
+        .filter(
+          (d) => d.hints.likelyUser.length > 0 && d.hints.likelyGemini.length > 0
+        )
+        .map((row) => stripElFromInspectRow(row));
+
+      report.wrappers.push({
+        index: i,
+        tag: w.tagName,
+        className:
+          typeof w.className === "string" ? w.className.slice(0, 180) : "",
+        id: w.id || "",
+        role: w.getAttribute("role") || "",
+        textLen: wtext.length,
+        textPreview: wtext.replace(/\s+/g, " ").slice(0, 120),
+        isConversationTurnWrapper: isConversationTurnWrapper(w, root),
+        containsMixedUserGeminiText: containsUserAndGeminiMixedText(w),
+        descendantCandidatesReturned: descendantCandidates.length,
+        descendantCandidates,
+        nodesHintedUserOnly: userOnly.map((d) => ({
+          depth: d.depth,
+          tag: d.tag,
+          className: d.className,
+          textPreview: d.textPreview,
+          dataAttrs: d.dataAttrs,
+          reasons: d.hints.likelyUser
+        })),
+        nodesHintedGeminiOnly: geminiOnly.map((d) => ({
+          depth: d.depth,
+          tag: d.tag,
+          className: d.className,
+          textPreview: d.textPreview,
+          dataAttrs: d.dataAttrs,
+          reasons: d.hints.likelyGemini
+        })),
+        nodesHintedAmbiguous: ambiguous
+      });
+    });
+
+    return report;
   }
 
   return {
@@ -909,6 +3539,7 @@ const SidebarNavigationModule = (() => {
      */
     destroy() {
       console.info("[GRA][sidebar] Sidebar destroyed.");
+      GraReadingPhase1Ux.clearFocusForRebuild();
       stopObserver();
       items = [];
       if (collapseTimer) {
@@ -967,11 +3598,111 @@ const SidebarNavigationModule = (() => {
       const nodes = findMessageElements();
       return nodes.map((node) => ({
         node,
-        messageType: detectMessageType(node)
+        messageType: detectMessageType(node, nodes)
       }));
+    },
+
+    /**
+     * 開發驗收：執行掃描管線並回傳 debug 資訊。
+     * 可在 console 呼叫 window.__GRA_DEBUG_SIDEBAR__() 取得。
+     */
+    runDebugPipeline() {
+      findMessageElements();
+      return lastSidebarDebugInfo;
+    },
+
+    /**
+     * 開發用：探查 turn wrapper 內層 DOM（不修改 Sidebar / prune / 分類）。
+     */
+    inspectTurnStructure(options) {
+      return runTurnDomInspect(options);
     }
   };
 })();
+
+/**
+ * 注入 script 到 page context，讓 DevTools Console（預設 page context）可呼叫
+ * window.__GRA_DEBUG_SIDEBAR__() 讀取 content script 寫入的 debug 資訊。
+ * Content script 與 page 有各自 window，需透過 DOM（dataset）傳遞。
+ */
+function injectSidebarDebugBridge() {
+  try {
+    const script = document.createElement("script");
+    script.textContent = `
+      (function() {
+        window.__GRA_DEBUG_SIDEBAR__ = function() {
+          try {
+            var raw = document.documentElement.dataset.graSidebarDebug;
+            return raw ? JSON.parse(raw) : null;
+          } catch (e) { return null; }
+        };
+      })();
+    `;
+    (document.head || document.documentElement).appendChild(script);
+    script.remove();
+  } catch (_) {}
+}
+
+/**
+ * Page world：以 <script src="chrome-extension://.../gra-inspect-bridge-page.js"> 注入，
+ * 避開 gemini.google.com 對 inline script 的 CSP 限制。
+ */
+function injectTurnInspectBridge() {
+  try {
+    if (typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.getURL) {
+      return;
+    }
+    const url = chrome.runtime.getURL("gra-inspect-bridge-page.js");
+    const script = document.createElement("script");
+    script.src = url;
+    script.async = false;
+    script.onload = function () {
+      try {
+        script.remove();
+      } catch (_) {}
+    };
+    script.onerror = function () {
+      console.warn(
+        "[GRA] gra-inspect-bridge-page.js failed to load; check web_accessible_resources / extension reload."
+      );
+    };
+    (document.head || document.documentElement).appendChild(script);
+  } catch (err) {
+    console.warn("[GRA] injectTurnInspectBridge", err);
+  }
+}
+
+document.addEventListener(
+  "__gra_turn_inspect_run__",
+  (ev) => {
+    const id = ev && ev.detail && ev.detail.id;
+    try {
+      const payload = SidebarNavigationModule.inspectTurnStructure(ev.detail?.opts || {});
+      document.dispatchEvent(
+        new CustomEvent("__gra_turn_inspect_done__", { detail: { id, payload } })
+      );
+    } catch (err) {
+      document.dispatchEvent(
+        new CustomEvent("__gra_turn_inspect_done__", {
+          detail: {
+            id,
+            payload: {
+              ok: false,
+              error: err && err.message ? String(err.message) : "inspect-failed",
+              generatedAt: new Date().toISOString()
+            }
+          }
+        })
+      );
+    }
+  },
+  false
+);
+
+if (typeof document !== "undefined" && document.documentElement) {
+  injectSidebarDebugBridge();
+  injectTurnInspectBridge();
+}
 
 /**
  * 選字後浮動工具列模組。
@@ -1609,7 +4340,8 @@ const CitationClipboardModule = (() => {
     if (!quotes || quotes.length === 0) return null;
 
     const segments = quotes.map((q, i) => {
-      return `[引用 ${i + 1}]\n「${q.text}」`;
+      const src = q.source ? `（來源：${q.source}）` : "";
+      return `[引用 ${i + 1}]${src}\n「${q.text}」`;
     });
     return (
       "以下是我引用的幾段內容：\n\n" +
@@ -1746,12 +4478,13 @@ const CitationClipboardModule = (() => {
 
       const textEl = document.createElement("span");
       textEl.className = "gra-citation-panel__item-text";
-      const preview =
-        quote.text.length > 60
-          ? quote.text.slice(0, 59) + "…"
-          : quote.text;
+      const qtext = String(quote.text || "");
+      const preview = qtext.length > 60 ? qtext.slice(0, 59) + "…" : qtext;
       textEl.textContent = preview;
-      textEl.title = quote.text;
+      let tip = qtext;
+      if (quote.note) tip += `\n備註：${quote.note}`;
+      if (quote.tags && quote.tags.length) tip += `\n標籤：${quote.tags.join(", ")}`;
+      textEl.title = tip;
 
       const insertBtn = document.createElement("button");
       insertBtn.type = "button";
@@ -1816,10 +4549,23 @@ const CitationClipboardModule = (() => {
       return;
     }
 
+    const sourceLabel =
+      (payload.source && String(payload.source).trim()) ||
+      (payload.sourceTextPreview && String(payload.sourceTextPreview).trim().slice(0, 80)) ||
+      "";
+    const baseCard =
+      typeof GRAStorage.createCard === "function"
+        ? GRAStorage.createCard(text, sourceLabel)
+        : {
+            id: `gra-card-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            text,
+            source: sourceLabel,
+            tags: [],
+            note: "",
+            createdAt: Date.now()
+          };
     const newQuote = {
-      id: `gra-quote-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-      text,
-      createdAt: Date.now(),
+      ...baseCard,
       sourceUrl: payload.sourceUrl,
       sourceMessageId: payload.sourceMessageId,
       sourceTextPreview: payload.sourceTextPreview,
@@ -2251,22 +4997,23 @@ const PageSearchModule = (() => {
   // ---- 輔助判斷 ---------------------------------------------------------
 
   /**
-   * 判斷 text node 是否位於插件自身的 UI 容器內。
-   * 向上遍歷祖先，只要找到 class 以 gra- 開頭的元素即返回 true。
+   * 本頁搜尋需排除的插件 UI 根（不含正文上的 gra-message / focus / collapse 等標記）。
+   * tooltip 掛在 body 下，須單獨列出。
+   */
+  const PAGE_SEARCH_EXCLUDED_UI_SELECTOR =
+    ".gra-sidebar-nav, .gra-citation-panel, .gra-selection-toolbar, .gra-search-ui, .gra-sidebar-nav__tooltip";
+
+  /**
+   * 判斷 text node 是否位於上述插件 UI 子樹內（與任意 gra-* class 無關）。
    */
   function isInsideGraUI(node) {
     let el = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
-    while (el && el !== document.body) {
-      if (
-        el.className &&
-        typeof el.className === "string" &&
-        el.className.split(" ").some((c) => c.startsWith("gra-"))
-      ) {
-        return true;
-      }
-      el = el.parentElement;
+    if (!el || !(el instanceof Element)) return false;
+    try {
+      return !!el.closest(PAGE_SEARCH_EXCLUDED_UI_SELECTOR);
+    } catch (_) {
+      return false;
     }
-    return false;
   }
 
   // ---- 浮動定位與拖曳 ----------------------------------------------------
@@ -2450,7 +5197,7 @@ const PageSearchModule = (() => {
    *
    * 搜尋根：main[role='main'] > main > document.body（與導航模組相同策略）
    * 排除：
-   * - class 以 gra- 開頭的插件 UI 子樹
+   * - PAGE_SEARCH_EXCLUDED_UI_SELECTOR 所涵蓋的插件 UI 子樹（側欄／引用面板／選字列／搜尋列／tooltip）
    * - display:none / visibility:hidden 的元素
    * - 純空白文字節點
    */
