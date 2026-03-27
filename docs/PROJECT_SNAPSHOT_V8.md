@@ -40,9 +40,9 @@
 | Store search | ✅ |
 | Conversation export (MD/TXT/JSON) | ✅ |
 | Conversation persistence (journal + snapshot) | ✅ |
-| XHR interception | ✅ (file in repo, loaded via manifest) |
+| XHR interception | ❌ removed (reverse engineering risk) |
 | Condense engine | ⏸️ disabled (file in repo, not loaded) |
-| Fetch hook | ⏸️ disabled (file in repo, not loaded) |
+| Fetch hook | ❌ removed (reverse engineering risk) |
 
 ---
 

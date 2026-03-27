@@ -21,16 +21,11 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["gra-inspect-bridge-page.js", "gra-xhr-hook-page.js"],
+      "resources": ["gra-inspect-bridge-page.js"],
       "matches": ["https://gemini.google.com/*"]
     }
   ],
   "content_scripts": [
-    {
-      "matches": ["https://gemini.google.com/*"],
-      "js": ["gra-xhr-injector.js"],
-      "run_at": "document_start"
-    },
     {
       "matches": [
         "https://gemini.google.com/*"
