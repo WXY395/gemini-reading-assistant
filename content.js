@@ -4480,6 +4480,8 @@ const CitationClipboardModule = (() => {
     panel.appendChild(header);
     panel.appendChild(listEl);
     panel.appendChild(footer);
+    // 初始為空狀態（小標籤），loadAndRenderQuotes 後會更新
+    panel.classList.add("gra-citation-panel--empty");
     document.body.appendChild(panel);
 
     return panel;
@@ -4518,6 +4520,10 @@ const CitationClipboardModule = (() => {
     const template = buildCombinedQuotesTemplate(quotes);
     if (!template) return;
     GeminiInputIntegrationModule.insertTextIntoInput(template);
+    // 插入後自動清除所有已插入的引用
+    await GRAStorage.clearQuotes();
+    clearQuoteSelection();
+    renderQuotes([]);
   }
 
   /**
@@ -4533,6 +4539,12 @@ const CitationClipboardModule = (() => {
     const template = buildCombinedQuotesTemplate(selected);
     if (!template) return;
     GeminiInputIntegrationModule.insertTextIntoInput(template);
+    // 插入後自動清除已插入的引用
+    const selectedIds = new Set(selected.map((q) => q.id));
+    const remaining = quotes.filter((q) => !selectedIds.has(q.id));
+    await GRAStorage.saveQuotes(remaining);
+    clearQuoteSelection();
+    renderQuotes(remaining);
   }
 
   function updateFooterButtons(quotes) {
@@ -4603,17 +4615,19 @@ const CitationClipboardModule = (() => {
    * 若陣列為空，顯示 empty state。
    */
   function renderQuotes(quotes) {
-    if (!listEl) return;
+    if (!listEl || !panel) return;
     listEl.textContent = "";
 
     syncSelectionWithQuotes(quotes);
     updateFooterButtons(quotes);
 
-    if (!quotes || quotes.length === 0) {
-      const empty = document.createElement("div");
-      empty.className = "gra-citation-panel__empty";
-      empty.textContent = "尚無引用";
-      listEl.appendChild(empty);
+    const isEmpty = !quotes || quotes.length === 0;
+
+    // 切換面板狀態 class
+    panel.classList.toggle("gra-citation-panel--empty", isEmpty);
+    panel.classList.toggle("gra-citation-panel--active", !isEmpty);
+
+    if (isEmpty) {
       return;
     }
 
@@ -4651,6 +4665,7 @@ const CitationClipboardModule = (() => {
       insertBtn.addEventListener("click", () => {
         const template = GeminiInputIntegrationModule.buildQuoteTemplate(quote.text);
         GeminiInputIntegrationModule.insertTextIntoInput(template);
+        removeQuote(quote.id);
       });
 
       item.appendChild(checkbox);

@@ -486,43 +486,40 @@
   padding: 14px 0;
 }
 
-/* ---- 引用暫存夾：狀態切換 + hover 展開 ---------------------------------- */
+/* ---- 引用暫存夾：狀態切換 ------------------------------------------------ */
 
-/* 無引用：弱存在，縮小、降透明 */
+/* 無引用：縮成小標籤 */
 .gra-citation-panel--empty {
-  opacity: 0.4;
-  transform: scale(0.95);
-  transition: opacity 0.2s ease, transform 0.2s ease;
+  width: auto;
+  max-height: none;
+  padding: 6px 12px;
+  opacity: 0.5;
+  transition: opacity 0.2s ease;
+  cursor: default;
+  pointer-events: none;
+}
+
+.gra-citation-panel--empty:hover {
+  opacity: 0.7;
+}
+
+.gra-citation-panel--empty .gra-citation-panel__header {
+  gap: 0;
+}
+
+.gra-citation-panel--empty .gra-citation-panel__header .gra-citation-panel__button {
+  display: none;
+}
+
+.gra-citation-panel--empty .gra-citation-panel__body,
+.gra-citation-panel--empty .gra-citation-panel__footer {
+  display: none;
 }
 
 /* 有引用：完整顯示 */
 .gra-citation-panel--active {
   opacity: 1;
-  transition: opacity 0.2s ease, transform 0.2s ease;
-}
-
-/* 未展開時：隱藏列表與底部按鈕 */
-.gra-citation-panel--empty .gra-citation-panel__body,
-.gra-citation-panel--empty .gra-citation-panel__footer,
-.gra-citation-panel--active:not(.gra-citation-panel--expanded) .gra-citation-panel__body,
-.gra-citation-panel--active:not(.gra-citation-panel--expanded) .gra-citation-panel__footer {
-  display: none;
-}
-
-/* 展開後：顯示完整 UI */
-.gra-citation-panel--expanded .gra-citation-panel__body {
-  display: block;
-}
-
-.gra-citation-panel--expanded .gra-citation-panel__footer {
-  display: flex;
-}
-
-/* 引用數量標籤 */
-.gra-citation-panel__count {
-  font-size: 11px;
-  color: #94a3b8;
-  margin-left: 4px;
+  transition: opacity 0.2s ease;
 }
 
 /* ---- 本頁關鍵字搜尋列 (Page Search UI) --------------------------------- */
