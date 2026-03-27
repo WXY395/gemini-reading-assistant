@@ -88,6 +88,66 @@ function detectConversationKey() {
   return `gemini:${base}`;
 }
 
+// ---- Message Store (Export V3) ---------------------------------------------
+
+/**
+ * 唯一資料來源：儲存每則訊息的 final 狀態，供 export 使用。
+ * key = data-gra-message-id
+ */
+const messageStore = new Map();
+let __gra_seq = 0;
+
+// ---- Top-level helpers for export（不依賴任何模組 IIFE）----
+
+/**
+ * 從 message element 提取文字內容（獨立版，不依賴 SidebarNavigationModule）。
+ */
+function __gra_getSourceText(el) {
+  if (!el) return "";
+  const SELECTORS = [
+    "message-content", ".message-content", "[data-message-content]",
+    ".markdown-content", ".response-content", "model-response"
+  ];
+  let root = null;
+  for (const sel of SELECTORS) {
+    root = el.querySelector(sel);
+    if (root) break;
+  }
+  root = root || el;
+  return (root.innerText || root.textContent || "").trim().replace(/\s+/g, " ");
+}
+
+/**
+ * 找出頁面上所有已標記 data-gra-message-id 的 message 元素（獨立版）。
+ */
+function __gra_findMessages() {
+  return Array.from(document.querySelectorAll("[data-gra-message-id]"));
+}
+
+/**
+ * 判定 message 角色（獨立版，不依賴 SidebarNavigationModule）。
+ * @returns {"user"|"assistant"|"unknown"}
+ */
+function __gra_detectRole(el) {
+  if (!el || !(el instanceof HTMLElement)) return "unknown";
+  // 1) 自訂標籤
+  var tag = (el.tagName || "").toUpperCase();
+  if (tag === "USER-QUERY") return "user";
+  if (tag === "MODEL-RESPONSE" || tag.startsWith("MODEL-") ||
+      tag.startsWith("BOT-") || tag.startsWith("RESPONSE-") ||
+      tag.startsWith("GEMINI-")) return "assistant";
+  // 2) data-author 向上查找
+  var node = el;
+  while (node && node !== document.body) {
+    var author = (node.getAttribute("data-author") ||
+                  node.getAttribute("data-message-author") || "").toLowerCase();
+    if (["user", "human", "1"].some(function(v) { return author.includes(v); })) return "user";
+    if (["model", "assistant", "gemini", "2"].some(function(v) { return author.includes(v); })) return "assistant";
+    node = node.parentElement;
+  }
+  return "unknown";
+}
+
 /**
  * 從 normalized text 建立指紋，供 journal 去重用。
  * 簡單可用版：前後片段組合，不要求密碼學強度。
@@ -274,6 +334,9 @@ const SidebarNavigationModule = (() => {
 
   // 篩選狀態：'all' | 'gemini' | 'user'
   let currentFilter = "all";
+
+  // 模組級 settings 參照（由 init/update 寫入，供 runCondenseV75 等內部函式使用）
+  let _moduleSettings = null;
 
   // 供 diagnostics 使用：最後使用的 selector 策略
   let lastStrategy = "none";
@@ -1204,7 +1267,18 @@ const SidebarNavigationModule = (() => {
         .querySelector('[data-filter="all"]')
         .classList.add("gra-sidebar-nav__filter-btn--active");
 
+      // 🔍 搜尋按鈕
+      const searchBtn = document.createElement("button");
+      searchBtn.type = "button";
+      searchBtn.className = "gra-sidebar-nav__search-btn";
+      searchBtn.textContent = "🔍";
+      searchBtn.title = "全文搜尋 messageStore (Ctrl+Shift+S)";
+      searchBtn.addEventListener("click", function () {
+        handleSearch("");
+      });
+
       toolbarEl.appendChild(filterEl);
+      toolbarEl.appendChild(searchBtn);
       bodyEl.appendChild(toolbarEl);
 
       container.appendChild(handleEl);
@@ -2977,6 +3051,145 @@ const SidebarNavigationModule = (() => {
     return deduplicateParentChild(divEls);
   }
 
+  // ---------------------------------------------------------------------------
+  // Condense V7.5 — passive mount helpers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * 注入 condense UI 所需的 CSS（冪等，只插一次）。
+   */
+  function injectCondenseStyles() {
+    if (document.getElementById("gra-condense-style")) return;
+
+    const style = document.createElement("style");
+    style.id = "gra-condense-style";
+    style.textContent = `
+      .gra-condense-root {
+        margin-bottom: 8px;
+      }
+
+      .gra-condense-box {
+        background: rgba(30, 41, 59, 0.6);
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        border-radius: 10px;
+        padding: 10px 12px;
+        font-size: 13px;
+        line-height: 1.5;
+        color: #e5e7eb;
+      }
+
+      .gra-condense-summary {
+        font-weight: 600;
+        margin-bottom: 4px;
+        color: #f1f5f9;
+      }
+
+      .gra-condense-method {
+        opacity: 0.85;
+        color: #cbd5e1;
+      }
+    `;
+
+    document.head.appendChild(style);
+  }
+
+  /**
+   * 從訊息節點取得可供濃縮的純文字。
+   * 嘗試鎖定主內容區，避免抓到 UI 標籤文字。
+   * @param {HTMLElement} node
+   * @returns {string}
+   */
+  function getCondenseSourceText(node) {
+    const CONTENT_SELECTORS = [
+      "message-content",
+      ".message-content",
+      "[data-message-content]",
+      ".markdown-content",
+      ".response-content",
+      "model-response"
+    ];
+    let root = null;
+    for (const sel of CONTENT_SELECTORS) {
+      root = node.querySelector(sel);
+      if (root) break;
+    }
+    root = root || node;
+    return (root.innerText || root.textContent || "").trim().replace(/\s+/g, " ");
+  }
+
+  /**
+   * 對單一 Gemini 訊息節點執行 Condense V7.5，並將結果插入 DOM。
+   * - 只處理 msgType === "gemini"
+   * - 具備冪等防呆（data-gra-condense-root 已存在則跳過）
+   * @param {HTMLElement} messageEl
+   * @param {string} msgType
+   */
+  function runCondenseV75(messageEl, msgType) {
+    if (_moduleSettings && !_moduleSettings.showMessageCondense) return;
+    if (msgType !== "gemini") return;
+    if (messageEl.querySelector("[data-gra-condense-root]")) return;
+
+    injectCondenseStyles();
+
+    const engine = window.GRACondenseEngine;
+    if (!engine || typeof engine.extractIR !== "function") return;
+
+    const text = getCondenseSourceText(messageEl);
+    if (!text || text.length < 30) return;
+
+    // extractIR returns null for unknown / unclassifiable content
+    const ir      = engine.extractIR(text);
+    let   summary = engine.renderSummaryV75(ir);   // null-safe: returns ⚠️ string
+    let   method  = engine.renderMethodV75(ir);    // null-safe: returns ""
+
+    // Semantic alignment guard: override if summary has no keyword overlap with source
+    if (ir && typeof engine.hasKeywordOverlap === "function") {
+      if (!engine.hasKeywordOverlap(text, summary)) {
+        summary = "⚠️ 無法安全濃縮（語義不匹配）";
+        method  = "";
+      }
+    }
+
+    console.log("[GRA] Condense V7.5 RUNNING", {
+      text: text.slice(0, 100),
+      irType: ir ? ir.type : "unknown/null",
+      summary,
+      method
+    });
+
+    const condenseRoot = document.createElement("div");
+    condenseRoot.setAttribute("data-gra-condense-root", "true");
+    condenseRoot.className = "gra-condense-root";
+
+    // Build inner HTML; omit method row when empty (warning-only state)
+    const methodHtml = method
+      ? '<div class="gra-condense-method">\u2699\uFE0F ' + method + "</div>"
+      : "";
+    condenseRoot.innerHTML =
+      '<div class="gra-condense-box">' +
+        '<div class="gra-condense-summary">\uD83E\uDDE0 ' + summary + "</div>" +
+        methodHtml +
+      "</div>";
+
+    // 找到最近的內容根，插在其前方；找不到則 prepend 到訊息節點
+    const CONTENT_SELECTORS_INLINE = [
+      "message-content", ".message-content", "[data-message-content]",
+      ".markdown-content", ".response-content", "model-response"
+    ];
+    let contentRoot = null;
+    for (const sel of CONTENT_SELECTORS_INLINE) {
+      contentRoot = messageEl.querySelector(sel);
+      if (contentRoot) break;
+    }
+    if (contentRoot && contentRoot.parentElement) {
+      contentRoot.parentElement.insertBefore(condenseRoot, contentRoot);
+    } else {
+      messageEl.prepend(condenseRoot);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+
   /**
    * 根據目前的訊息節點重建側邊導覽清單。
    * 會清空舊項目並重新建立，但不會重複插入外層容器。
@@ -3016,6 +3229,8 @@ const SidebarNavigationModule = (() => {
       GraReadingPhase1Ux.ensureGraMessage(node);
 
       const msgType = detectMessageType(node, messageElements);
+      runCondenseV75(node, msgType);
+      finalizeMessage(node, msgType);
       const label = buildLabelFromMessage(node, index);
       const tooltipData = buildTooltipContent(node, msgType);
 
@@ -3507,6 +3722,7 @@ const SidebarNavigationModule = (() => {
      * 初始化側邊導覽模組，必要時會建立 DOM 容器、掃描訊息並綁定事件。
      */
     init(settings) {
+      _moduleSettings = settings || _moduleSettings;
       console.info("[GRA][sidebar] init called", {
         extensionEnabled: settings ? settings.extensionEnabled : undefined,
         showNavigator: settings ? settings.showNavigator : undefined,
@@ -3573,6 +3789,7 @@ const SidebarNavigationModule = (() => {
      * - 當重新開啟時，如果容器不存在則會重新初始化；若存在則重新掃描。
      */
     update(settings) {
+      _moduleSettings = settings || _moduleSettings;
       if (!settings || !settings.extensionEnabled || !settings.showNavigator) {
         this.destroy();
       } else if (!container) {
@@ -5994,6 +6211,456 @@ const ConversationBackfillModule = (() => {
   };
 })();
 
+// ---- Message Store: finalizeMessage + Export (V3) --------------------------
+
+/**
+ * 將訊息的最終狀態寫入 messageStore。
+ * Condense 資料從 UI 已渲染的 .condense-block 讀取（不呼叫 engine API）。
+ * 冪等：若 id 已存在且 text + summary 未變，不覆蓋。
+ * 由 rebuildNavigation() 在每次巡檢時呼叫，確保 messageStore 即時更新。
+ *
+ * @param {HTMLElement} messageEl
+ * @param {string} msgType - "user" | "gemini" | "unknown"
+ */
+function finalizeMessage(messageEl, msgType) {
+  // ---- 1️⃣ messageId 穩定性（deterministic fallback） ----
+  let id = messageEl.getAttribute("data-gra-message-id");
+  const text = __gra_getSourceText(messageEl) || "";
+
+  if (!id) {
+    id = "gra_" + text.slice(0, 50);
+  }
+
+  const role = msgType === "gemini" ? "assistant" : "user";
+
+  // ---- Condense（僅 assistant） ----
+  let condensed = null;
+
+  if (role === "assistant") {
+    const block = messageEl.querySelector("[data-gra-condense-root]");
+
+    if (block) {
+      // DOM 結構 parsing（對應實際 class: gra-condense-summary / gra-condense-method）
+      const summaryEl = block.querySelector(".gra-condense-summary");
+      const methodEl = block.querySelector(".gra-condense-method");
+
+      // 移除 emoji 前綴（🧠 / ⚙️）取得純文字
+      const summary = (summaryEl?.textContent || "").replace(/^[\s\uD83E\uDDE0\u2699\uFE0F⚠️]+/, "").trim();
+      const method = (methodEl?.textContent || "").replace(/^[\s\uD83E\uDDE0\u2699\uFE0F⚠️]+/, "").trim();
+
+      if (summary && !summary.startsWith("無法安全濃縮")) {
+        condensed = {
+          summary,
+          method,
+          version: "v1",
+          status: "ok"
+        };
+      }
+    }
+    // block 不存在或 summary 為空 / 失敗 → condensed 保持 null
+  }
+
+  // ---- 2️⃣ race condition 防護 ----
+  const prev = messageStore.get(id);
+
+  if (prev) {
+    // 若之前沒有 summary，現在有 → 允許補寫（condense-block 延遲渲染）
+    if (!prev.condensed?.summary && condensed?.summary) {
+      // allow update — fall through
+    } else if (prev.text.length > text.length) {
+      // 若舊資料更完整（text 更長），禁止覆蓋
+      return;
+    } else if (prev.updatedAt && Date.now() - prev.updatedAt < 50) {
+      // 若距上次寫入 < 50ms，視為重複觸發，跳過
+      return;
+    } else if (prev.text === text && prev.condensed?.summary) {
+      // 若已有完整 condense 且內容相同，不覆蓋
+      return;
+    }
+  }
+
+  messageStore.set(id, {
+    id,
+    role,
+    text,
+    condensed,
+    state: "final",
+    seq: prev?.seq ?? __gra_seq++,
+    createdAt: prev?.createdAt || Date.now(),
+    updatedAt: Date.now()
+  });
+}
+
+/**
+ * Export 前保險：掃描頁面上所有 message，補齊未 finalize 的項目。
+ * 不改變已有資料，僅補漏。
+ */
+function ensureAllMessagesFinalized() {
+  const nodes = __gra_findMessages();
+  nodes.forEach(function (el) {
+    const id = el.getAttribute("data-gra-message-id");
+    if (!id || messageStore.has(id)) return;
+    const role = __gra_detectRole(el);
+    var msgType = role === "assistant" ? "gemini" : (role === "user" ? "user" : "unknown");
+    finalizeMessage(el, msgType);
+  });
+  // 二次掃描：補齊首輪因 DOM timing 漏寫的項目
+  nodes.forEach(function (el) {
+    const id = el.getAttribute("data-gra-message-id") || ("gra_" + (__gra_getSourceText(el) || "").slice(0, 50));
+    if (messageStore.has(id)) return;
+    const role = __gra_detectRole(el);
+    var msgType = role === "assistant" ? "gemini" : (role === "user" ? "user" : "unknown");
+    finalizeMessage(el, msgType);
+  });
+}
+
+// ---- Condense Observer（監聽 condense-block 延遲渲染，自動補寫 messageStore）----
+const condenseObserver = new MutationObserver(function (mutations) {
+  mutations.forEach(function (m) {
+    m.addedNodes.forEach(function (node) {
+      if (!(node instanceof HTMLElement)) return;
+
+      // 直接匹配 .gra-condense-root
+      if (node.classList && node.classList.contains("gra-condense-root")) {
+        var messageEl = node.closest("[data-gra-message-id]");
+        if (!messageEl) return;
+        finalizeMessage(messageEl, "gemini");
+        return;
+      }
+
+      // 子樹中包含 .gra-condense-root
+      var blocks = node.querySelectorAll ? node.querySelectorAll("[data-gra-condense-root]") : [];
+      blocks.forEach(function (block) {
+        var msgEl = block.closest("[data-gra-message-id]");
+        if (!msgEl) return;
+        finalizeMessage(msgEl, "gemini");
+      });
+    });
+  });
+});
+
+if (typeof document !== "undefined" && document.body) {
+  condenseObserver.observe(document.body, { childList: true, subtree: true });
+}
+
+/**
+ * 從 messageStore 匯出 Markdown（給人看）。
+ * 不依賴 DOM，僅讀取 store；export 前自動補齊漏項。
+ * @returns {string}
+ */
+function exportStoreToMarkdown() {
+  ensureAllMessagesFinalized();
+
+  const messages = Array.from(messageStore.values())
+    .sort(function (a, b) { return a.seq - b.seq; });
+
+  if (!messages.length) return "";
+
+  let md = "# Gemini 對話紀錄\n\n*Exported from Gemini Reading Assistant*\n\n---\n\n";
+
+  for (var i = 0; i < messages.length; i++) {
+    var msg = messages[i];
+    if (msg.role === "user") {
+      md += "## 使用者\n\n" + msg.text + "\n\n---\n\n";
+    } else {
+      md += "## Gemini\n\n";
+
+      if (msg.condensed && msg.condensed.summary) {
+        md += "### 重點（Beta）\n\n" + msg.condensed.summary + "\n\n";
+        if (msg.condensed.method) {
+          md += "### 說明\n\n" + msg.condensed.method + "\n\n";
+        }
+      }
+
+      md += msg.text + "\n\n---\n\n";
+    }
+  }
+
+  return md;
+}
+
+/**
+ * 從 messageStore 匯出 TXT（純文字）。
+ * export 前自動補齊漏項。
+ * @returns {string}
+ */
+function exportStoreToTxt() {
+  ensureAllMessagesFinalized();
+
+  const messages = Array.from(messageStore.values())
+    .sort(function (a, b) { return a.seq - b.seq; });
+
+  if (!messages.length) return "";
+
+  const lines = [
+    "=== Gemini 對話紀錄 ===",
+    "Exported from Gemini Reading Assistant",
+    "",
+    "---",
+    ""
+  ];
+
+  for (var i = 0; i < messages.length; i++) {
+    var msg = messages[i];
+    var label = msg.role === "user" ? "使用者" : "Gemini";
+    lines.push("--- " + label + " ---");
+    lines.push("");
+    if (msg.role !== "user" && msg.condensed && msg.condensed.summary) {
+      lines.push("[重點] " + msg.condensed.summary);
+      if (msg.condensed.method) {
+        lines.push("[說明] " + msg.condensed.method);
+      }
+      lines.push("");
+    }
+    lines.push(msg.text || "(無內容)");
+    lines.push("");
+  }
+
+  return lines.join("\n");
+}
+
+/**
+ * 從 messageStore 匯出 JSON（給系統用 / RAG）。
+ * export 前自動補齊漏項。
+ * @returns {string}
+ */
+function exportStoreToJSON() {
+  ensureAllMessagesFinalized();
+
+  var messages = Array.from(messageStore.values())
+    .sort(function (a, b) { return a.seq - b.seq; });
+
+  if (!messages.length) return "";
+
+  return JSON.stringify({
+    conversation: messages.map(function (msg) {
+      return {
+        id: msg.id,
+        role: msg.role,
+        text: msg.text,
+        summary: msg.condensed?.summary || "",
+        method: msg.condensed?.method || "",
+        condenseStatus: msg.condensed?.status || "none",
+        condenseVersion: msg.condensed?.version || "v1",
+        createdAt: msg.createdAt
+      };
+    })
+  }, null, 2);
+}
+
+// ---- Search Layer (V3) -----------------------------------------------------
+
+var FEATURES = { SEARCH_ADVANCED: false };
+var __gra_search_styles_injected = false;
+
+function injectSearchStyles() {
+  if (__gra_search_styles_injected) return;
+  __gra_search_styles_injected = true;
+  var style = document.createElement("style");
+  style.textContent =
+    ".gra-search-panel{position:fixed;top:0;left:300px;right:0;height:auto;max-height:50vh;overflow:hidden;background:#1a1a1a;color:#e0e0e0;z-index:9999;box-shadow:0 2px 12px rgba(0,0,0,.5);font-family:system-ui,sans-serif;font-size:13px;display:flex;flex-direction:column;border-bottom:2px solid #f97316;border-radius:0 0 8px 8px}" +
+    ".gra-search-panel__header{display:flex;align-items:center;gap:8px;padding:8px 16px;border-bottom:1px solid #333}" +
+    ".gra-search-panel__input{flex:1;background:#111;border:1px solid #444;border-radius:6px;color:#fff;padding:6px 12px;font-size:14px;outline:none}" +
+    ".gra-search-panel__input:focus{border-color:#f97316}" +
+    ".gra-search-panel__input::placeholder{color:#666}" +
+    ".gra-search-panel__close{background:none;border:none;color:#888;font-size:18px;cursor:pointer;padding:0 6px;line-height:1}" +
+    ".gra-search-panel__close:hover{color:#fff}" +
+    ".gra-search-panel__meta{padding:4px 16px;color:#888;font-size:11px;border-bottom:1px solid #222}" +
+    ".gra-search-panel__list{overflow-y:auto;flex:1;padding:4px 0}" +
+    ".gra-search-item{padding:8px 16px;cursor:pointer;border-bottom:1px solid #222;line-height:1.5}" +
+    ".gra-search-item:hover{background:#262626}" +
+    ".gra-search-item__role{font-size:11px;color:#888;margin-bottom:2px}" +
+    ".gra-search-item mark{background:#f97316;color:#fff;border-radius:2px;padding:0 1px}";
+  document.head.appendChild(style);
+}
+
+/**
+ * 從 messageStore 搜尋關鍵字。Free 版搜 text + summary；Pro 版加搜 method 且無上限。
+ * @param {string} keyword
+ * @returns {Array}
+ */
+function searchMessages(keyword) {
+  if (!keyword) return [];
+
+  var lower = keyword.toLowerCase();
+  var FREE_LIMIT = 20;
+
+  var results = [];
+
+  for (var entry of messageStore.values()) {
+    var hit = false;
+
+    if (entry.text.toLowerCase().includes(lower)) hit = true;
+    if (!hit && entry.condensed?.summary?.toLowerCase().includes(lower)) hit = true;
+
+    if (!hit && FEATURES.SEARCH_ADVANCED) {
+      if (entry.condensed?.method?.toLowerCase().includes(lower)) hit = true;
+    }
+
+    if (hit) results.push(entry);
+  }
+
+  // seq 排序
+  results.sort(function (a, b) { return (a.seq || 0) - (b.seq || 0); });
+
+  if (!FEATURES.SEARCH_ADVANCED) {
+    results = results.slice(0, FREE_LIMIT);
+  }
+
+  return results;
+}
+
+/**
+ * 將 keyword 在文字中高亮（HTML safe）。
+ * @param {string} text
+ * @param {string} keyword
+ * @returns {string}
+ */
+function highlightMatches(text, keyword) {
+  if (!keyword || !text) return text || "";
+
+  // 轉義 regex 特殊字元
+  var escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  var regex = new RegExp("(" + escaped + ")", "gi");
+
+  // 先 HTML escape 再高亮
+  var safe = text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+
+  return safe.replace(regex, "<mark>$1</mark>");
+}
+
+/**
+ * 渲染搜尋結果到浮層面板。
+ * @param {Array} results
+ * @param {string} keyword
+ */
+function renderSearchResults(results, keyword) {
+  injectSearchStyles();
+
+  var container = document.querySelector(".gra-search-panel");
+
+  if (!container) {
+    container = document.createElement("div");
+    container.className = "gra-search-panel";
+    document.body.appendChild(container);
+  }
+
+  // 動態避讓左右 nav
+  var geminiNav = document.querySelector("nav") || document.querySelector("[class*='side-nav']");
+  var graNav = document.querySelector(".gra-sidebar-nav");
+  container.style.left = (geminiNav ? geminiNav.offsetWidth : 300) + "px";
+  container.style.right = (graNav ? graNav.offsetWidth : 0) + "px";
+
+  container.innerHTML = "";
+
+  // ---- header（input + close） ----
+  var header = document.createElement("div");
+  header.className = "gra-search-panel__header";
+
+  var input = document.createElement("input");
+  input.type = "text";
+  input.className = "gra-search-panel__input";
+  input.placeholder = "\u641C\u5C0B\u5C0D\u8A71\u5167\u5BB9\u2026";
+  input.value = keyword || "";
+
+  var debounceTimer = null;
+  input.addEventListener("input", function () {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(function () {
+      handleSearch(input.value.trim());
+    }, 200);
+  });
+
+  var closeBtn = document.createElement("button");
+  closeBtn.className = "gra-search-panel__close";
+  closeBtn.textContent = "\u2715";
+  closeBtn.title = "\u95DC\u9589\u641C\u5C0B";
+  closeBtn.addEventListener("click", function () {
+    container.remove();
+  });
+
+  header.appendChild(input);
+  header.appendChild(closeBtn);
+  container.appendChild(header);
+
+  // ---- meta ----
+  var meta = document.createElement("div");
+  meta.className = "gra-search-panel__meta";
+  if (!keyword) {
+    meta.textContent = "輸入關鍵字搜尋對話內容 ｜ 快捷鍵 Ctrl+Shift+S";
+  } else {
+    var countText = results.length + " \u7B46\u7D50\u679C";
+    if (!FEATURES.SEARCH_ADVANCED && results.length >= 20) {
+      countText += "\uFF08Free \u7248\u4E0A\u9650 20\uFF09";
+    }
+    meta.textContent = countText;
+  }
+  container.appendChild(meta);
+
+  // ---- list ----
+  var list = document.createElement("div");
+  list.className = "gra-search-panel__list";
+
+  for (var i = 0; i < results.length; i++) {
+    (function (msg) {
+      var item = document.createElement("div");
+      item.className = "gra-search-item";
+
+      var roleLabel = document.createElement("div");
+      roleLabel.className = "gra-search-item__role";
+      roleLabel.textContent = msg.role === "user" ? "\uD83D\uDC64 User" : "\uD83E\uDD16 Assistant";
+
+      var preview = document.createElement("div");
+      var previewText = msg.condensed?.summary || msg.text.slice(0, 120);
+      preview.innerHTML = highlightMatches(previewText, keyword);
+
+      item.appendChild(roleLabel);
+      item.appendChild(preview);
+
+      item.addEventListener("click", function () {
+        var el = document.querySelector("[data-gra-message-id=\"" + msg.id + "\"]");
+        if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+
+      list.appendChild(item);
+    })(results[i]);
+  }
+
+  container.appendChild(list);
+
+  // focus input
+  setTimeout(function () { input.focus(); }, 50);
+}
+
+/**
+ * 搜尋入口。
+ * @param {string} keyword
+ */
+function handleSearch(keyword) {
+  ensureAllMessagesFinalized();
+  var results = searchMessages(keyword);
+  renderSearchResults(results, keyword);
+}
+
+// ---- Store Search 鍵盤快捷鍵 (Ctrl+Shift+S) ----
+document.addEventListener("keydown", function (e) {
+  if (e.ctrlKey && e.shiftKey && e.key === "S") {
+    e.preventDefault();
+    var existing = document.querySelector(".gra-search-panel");
+    if (existing) {
+      existing.remove();
+    } else {
+      handleSearch("");
+      // 自動 focus 到搜尋輸入框
+      var input = document.querySelector(".gra-search-panel__input");
+      if (input) input.focus();
+    }
+  }
+});
+
 // ---- Snapshot Export (V2.9D) ----------------------------------------------
 
 const TYPE_LABELS = { user: "使用者", gemini: "Gemini", unknown: "未知" };
@@ -6049,39 +6716,60 @@ function serializeSnapshotToTxt(snapshot) {
 }
 
 /**
- * 從已保存 snapshot 匯出為指定格式。
- * 僅從 storage 讀取，不掃描 DOM。
+ * 匯出對話為指定格式（md / txt / json）。
+ *
+ * 優先使用 messageStore（即時 DOM 資料，含 condense 摘要），
+ * 若 messageStore 為空則降級讀取 storage snapshot。
  */
 async function exportSnapshotAsFormat(format) {
   const conversationKey = detectConversationKey();
-  const GRA = typeof GRAStorage !== "undefined" ? GRAStorage : null;
+  const safeKey = (conversationKey || "conversation")
+    .replace(/[^a-zA-Z0-9_-]/g, "_")
+    .slice(0, 40);
+  const timestamp = new Date().toISOString().slice(0, 19).replace(/[:-]/g, "");
 
+  // ---- 1) 優先嘗試 messageStore ----
+  let content = "";
+  if (format === "json") {
+    content = exportStoreToJSON();
+  } else if (format === "md") {
+    content = exportStoreToMarkdown();
+  } else {
+    content = exportStoreToTxt();
+  }
+
+  if (content) {
+    const ext = format === "json" ? "json" : format === "md" ? "md" : "txt";
+    return {
+      success: true,
+      content,
+      format,
+      filename: `gemini-${safeKey}-${timestamp}.${ext}`
+    };
+  }
+
+  // ---- 2) 降級：從 storage snapshot 讀取 ----
+  const GRA = typeof GRAStorage !== "undefined" ? GRAStorage : null;
   if (!GRA?.getConversationSnapshot) {
-    return { success: false, reason: "no_storage" };
+    return { success: false, reason: "no_data" };
   }
 
   const snapshot = await GRA.getConversationSnapshot(conversationKey);
   if (!snapshot?.entries?.length) {
-    return { success: false, reason: "no_snapshot" };
+    return { success: false, reason: "no_data" };
   }
 
-  const content =
+  content =
     format === "md"
       ? serializeSnapshotToMarkdown(snapshot)
       : serializeSnapshotToTxt(snapshot);
 
   const ext = format === "md" ? "md" : "txt";
-  const safeKey = (conversationKey || "conversation")
-    .replace(/[^a-zA-Z0-9_-]/g, "_")
-    .slice(0, 40);
-  const timestamp = new Date().toISOString().slice(0, 19).replace(/[:-]/g, "");
-  const filename = `gemini-${safeKey}-${timestamp}.${ext}`;
-
   return {
     success: true,
     content,
     format,
-    filename
+    filename: `gemini-${safeKey}-${timestamp}.${ext}`
   };
 }
 
@@ -6180,13 +6868,18 @@ const GeminiReadingAssistant = (() => {
             try {
               const status = await ConversationJournalModule.getStatus();
               const autoSave = ConversationAutoSaveModule.getStatus();
-              sendResponse({ ...status, autoSave });
+              sendResponse({
+                ...status,
+                autoSave,
+                messageStoreCount: messageStore.size
+              });
             } catch (e) {
               sendResponse({
                 conversationKey: detectConversationKey(),
                 pageType: detectPageType(),
                 blockCount: 0,
                 savedEntryCount: 0,
+                messageStoreCount: messageStore.size,
                 lastSavedAt: null,
                 autoSave: ConversationAutoSaveModule.getStatus(),
                 error: String(e)
@@ -6233,10 +6926,9 @@ const GeminiReadingAssistant = (() => {
         case "GRA_EXPORT_SNAPSHOT":
           (async () => {
             try {
-              const format =
-                message.format === "md" || message.format === "txt"
-                  ? message.format
-                  : "md";
+              const format = ["md", "txt", "json"].includes(message.format)
+                ? message.format
+                : "md";
               const result = await exportSnapshotAsFormat(format);
               sendResponse(result);
             } catch (e) {
@@ -6249,6 +6941,17 @@ const GeminiReadingAssistant = (() => {
             }
           })();
           return true;
+        case "GRA_OPEN_STORE_SEARCH":
+          (function () {
+            try {
+              handleSearch(message.keyword || "");
+              sendResponse({ success: true });
+            } catch (e) {
+              console.warn("[GRA][store-search] Error:", e);
+              sendResponse({ success: false, reason: "error", error: String(e) });
+            }
+          })();
+          return true;
         default:
           // 未識別的訊息類型可在此忽略或記錄。
           break;
@@ -6256,6 +6959,9 @@ const GeminiReadingAssistant = (() => {
     });
 
     console.info("[GRA] Gemini Reading Assistant content script initialized.");
+
+    // ---- TEST BRIDGE (開發用，正式版移除) ----
+    // (test bridge moved outside IIFE)
   }
 
   return {
@@ -6271,4 +6977,5 @@ if (document.readyState === "loading") {
 } else {
   GeminiReadingAssistant.init();
 }
+
 

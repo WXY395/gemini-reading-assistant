@@ -18,6 +18,7 @@
       showQuotePanel: document.getElementById("gra-toggle-citation"),
       showGeminiInputInsertion: document.getElementById("gra-toggle-gemini-input"),
       showPageSearch: document.getElementById("gra-toggle-page-search"),
+      showMessageCondense: document.getElementById("gra-toggle-message-condense"),
       btnOpenSearch: document.getElementById("gra-btn-open-search"),
       btnRefreshDiagnostics: document.getElementById("gra-btn-refresh-diagnostics"),
       btnSaveConversation: document.getElementById("gra-btn-save-conversation"),
@@ -235,12 +236,12 @@
       if (elements.btnFullBackfill) {
         elements.btnFullBackfill.disabled = !(status.blockCount > 0);
       }
-      const hasSaved = (status.savedEntryCount ?? 0) > 0;
+      const hasData = (status.savedEntryCount ?? 0) > 0 || (status.messageStoreCount ?? 0) > 0;
       if (elements.btnExportMd) {
-        elements.btnExportMd.disabled = !hasSaved;
+        elements.btnExportMd.disabled = !hasData;
       }
       if (elements.btnExportTxt) {
-        elements.btnExportTxt.disabled = !hasSaved;
+        elements.btnExportTxt.disabled = !hasData;
       }
     } catch (_) {
       fallback();
@@ -327,7 +328,8 @@
     const DEFAULT_SETTINGS = {
       extensionEnabled: true,
       showNavigator: true,
-      showQuotePanel: true
+      showQuotePanel: true,
+      showMessageCondense: false
     };
 
     return new Promise((resolve) => {
@@ -425,7 +427,8 @@
       "showSelectionToolbar",
       "showQuotePanel",
       "showGeminiInputInsertion",
-      "showPageSearch"
+      "showPageSearch",
+      "showMessageCondense"
     ];
     moduleKeys.forEach((key) => {
       if (elements[key]) {
@@ -460,7 +463,8 @@
       "showSelectionToolbar",
       "showQuotePanel",
       "showGeminiInputInsertion",
-      "showPageSearch"
+      "showPageSearch",
+      "showMessageCondense"
     ];
     moduleKeys.forEach((key) => {
       const el = elements[key];

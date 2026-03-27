@@ -21,17 +21,29 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["gra-inspect-bridge-page.js"],
+      "resources": ["gra-inspect-bridge-page.js", "gra-xhr-hook-page.js"],
       "matches": ["https://gemini.google.com/*"]
     }
   ],
   "content_scripts": [
+    {
+      "matches": ["https://gemini.google.com/*"],
+      "js": ["gra-xhr-injector.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["https://gemini.google.com/*"],
+      "js": ["gra-fetch-hook.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
     {
       "matches": [
         "https://gemini.google.com/*"
       ],
       "js": [
         "utils/storage.js",
+        "condense-engine.js",
         "content.js"
       ],
       "css": [

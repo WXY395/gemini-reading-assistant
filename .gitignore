@@ -8,3 +8,6 @@ build/
 .claude/
 .playwright-mcp/
 backups/
+*.bak
+*.zip
+test-*.js

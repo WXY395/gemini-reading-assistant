@@ -97,12 +97,34 @@
 
 .gra-sidebar-nav__toolbar {
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .gra-sidebar-nav__filter {
   display: flex;
   gap: 4px;
   margin-top: 2px;
+  flex: 1;
+}
+
+.gra-sidebar-nav__search-btn {
+  background: none;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 12px;
+  cursor: pointer;
+  color: #64748b;
+  line-height: 1;
+  margin-top: 2px;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.gra-sidebar-nav__search-btn:hover {
+  background: rgba(249, 115, 22, 0.15);
+  border-color: #f97316;
 }
 
 .gra-sidebar-nav__filter-btn {
@@ -203,9 +225,9 @@
   z-index: 10000;
 
   display: inline-flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 4px;
+  flex-direction: row;
+  align-items: center;
+  gap: 2px;
 
   padding: 6px 8px;
   border-radius: 8px;
@@ -226,15 +248,16 @@
 
 .gra-selection-toolbar__buttons {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  flex-direction: row;
+  align-items: center;
+  gap: 2px;
 }
 
 .gra-selection-toolbar__row {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 4px;
+  flex-wrap: nowrap;
+  gap: 2px;
 }
 
 .gra-selection-toolbar__button {
@@ -251,6 +274,30 @@
 
 .gra-selection-toolbar__button:hover {
   background: rgba(148, 163, 184, 0.35);
+}
+
+/* ---- Toast (輕量非侵入提示) -------------------------------------------- */
+
+.gra-toast {
+  position: fixed;
+  bottom: 80px;
+  right: 20px;
+  background: rgba(0, 0, 0, 0.85);
+  color: #fff;
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: all 0.2s ease;
+  z-index: 9999;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.gra-toast.show {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 /* ---- 引用暫存夾面板 (Citation Clipboard Panel) -------------------------- */
@@ -343,6 +390,7 @@
   gap: 6px;
   padding: 6px 0;
   border-bottom: 1px solid rgba(148, 163, 184, 0.15);
+  transition: transform 0.15s ease, opacity 0.15s ease;
 }
 
 .gra-citation-panel__item-checkbox {
@@ -436,6 +484,45 @@
   color: #475569;
   text-align: center;
   padding: 14px 0;
+}
+
+/* ---- 引用暫存夾：狀態切換 + hover 展開 ---------------------------------- */
+
+/* 無引用：弱存在，縮小、降透明 */
+.gra-citation-panel--empty {
+  opacity: 0.4;
+  transform: scale(0.95);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+/* 有引用：完整顯示 */
+.gra-citation-panel--active {
+  opacity: 1;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+/* 未展開時：隱藏列表與底部按鈕 */
+.gra-citation-panel--empty .gra-citation-panel__body,
+.gra-citation-panel--empty .gra-citation-panel__footer,
+.gra-citation-panel--active:not(.gra-citation-panel--expanded) .gra-citation-panel__body,
+.gra-citation-panel--active:not(.gra-citation-panel--expanded) .gra-citation-panel__footer {
+  display: none;
+}
+
+/* 展開後：顯示完整 UI */
+.gra-citation-panel--expanded .gra-citation-panel__body {
+  display: block;
+}
+
+.gra-citation-panel--expanded .gra-citation-panel__footer {
+  display: flex;
+}
+
+/* 引用數量標籤 */
+.gra-citation-panel__count {
+  font-size: 11px;
+  color: #94a3b8;
+  margin-left: 4px;
 }
 
 /* ---- 本頁關鍵字搜尋列 (Page Search UI) --------------------------------- */
@@ -629,5 +716,110 @@ body.gra-focus-active .gra-message.gra-focus-target {
   flex: 1;
   min-width: 0;
   margin-bottom: 0;
+}
+
+/* ---- Message condense (model 回覆濃縮) ------------------------------------
+ * z-index 刻意低於 .gra-sidebar-nav (9999)，避免蓋住導航。
+ * 不使用全頁 absolute 遮罩；濃縮時收合 target 內既有子節點的視覺高度（原文仍在 DOM）。
+ */
+
+.gra-condense-root {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  margin: 0 0 12px 0;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.35);
+  box-sizing: border-box;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #0f172a;
+  z-index: 100;
+  position: relative;
+}
+
+.gra-condense-controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 0;
+}
+
+.gra-condense-button {
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(148, 163, 184, 0.55);
+  background: rgba(241, 245, 249, 0.95);
+  color: #334155;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+}
+
+.gra-condense-button:hover {
+  background: rgba(226, 232, 240, 0.98);
+  border-color: rgba(100, 116, 139, 0.5);
+}
+
+.gra-condense-button:disabled,
+.gra-condense-button[hidden] {
+  display: none;
+}
+
+.gra-condense-panel {
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-top: 10px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
+  max-height: min(50vh, 420px);
+  overflow: auto;
+  box-sizing: border-box;
+}
+
+.gra-condense-meta {
+  font-size: 11px;
+  color: #64748b;
+  margin-bottom: 8px;
+  line-height: 1.35;
+}
+
+.gra-condense-text {
+  font-size: 13px;
+  color: #1e293b;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* 濃縮啟用：僅收合標記為正文容器的節點（非刪除 DOM） */
+.gra-condense-active .gra-condense-original-body {
+  max-height: 0 !important;
+  overflow: hidden !important;
+  opacity: 0 !important;
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  border: none !important;
+  pointer-events: none !important;
+}
+
+/* 找不到內層正文容器時：收合 message 下除 condense root 外的直接子節點 */
+.gra-condense-active.gra-condense-fallback-collapse > :not([data-gra-condense-root]) {
+  max-height: 0 !important;
+  overflow: hidden !important;
+  opacity: 0 !important;
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  border: none !important;
+  pointer-events: none !important;
 }
 

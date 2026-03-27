@@ -30,7 +30,8 @@
     // 預留未來用欄位（目前不一定會在 UI 中呈現）
     showSelectionToolbar: true,
     showGeminiInputInsertion: true,
-    showPageSearch: true
+    showPageSearch: true,
+    showMessageCondense: false
   };
 
   /**
