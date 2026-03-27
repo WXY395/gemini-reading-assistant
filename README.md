@@ -53,18 +53,14 @@ This extension solves that by adding a **reading layer** on top of Gemini.
 
 ### ✂️ Selection Toolbar
 
-* Quote selected text
-* Ask Gemini to:
-
-  * Explain
-  * Summarize
-  * Expand
-* One-click prompt workflows
+* **引用 (Quote)** — Click: insert into Gemini input / Shift+Click: save to citation clipboard
+* **複製 (Copy)** — Copy selected text to clipboard
 
 ### 📌 Citation Clipboard
 
-* Save useful outputs as reusable cards
-* Insert back into Gemini input
+* Save useful outputs as reusable knowledge cards
+* Insert back into Gemini input (auto-removed after insertion)
+* Collapses to a minimal label when empty
 * Lightweight knowledge capture
 
 ### 🔎 Store Search (Ctrl+Shift+S)

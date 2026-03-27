@@ -1,49 +1,31 @@
-# Gemini Reading Assistant — Engineering Snapshot (V8)
+# Gemini Reading Assistant — Engineering Snapshot (V9)
 
 ## System Version
 
-**V8 — XHR Interception Breakthrough**
+**V9 — Stability & Architecture Cleanup**
 
 ---
 
-## Problem → Root Cause → Implementation → Result
+## Changes from V8
 
-### 1. Cannot intercept Gemini API
+### Fixes
+- **Sidebar navigation crash** — `runCondenseV75()` referenced `currentSettings` across IIFE scope boundary, causing `ReferenceError` that crashed `rebuildNavigation()`. Fixed with module-level `_moduleSettings`.
+- **Settings race condition** — `GRA_UPDATE_SETTINGS` handler wrote stale `currentSettings` to storage concurrently with popup. Removed redundant `saveSettings()` call (popup already persists).
+- **Storage error handling** — `chrome.runtime.lastError` was never checked in `readFromStorage` / `writeToStorage`. Now properly rejects promises on error.
 
-- **Root Cause:** Uses XMLHttpRequest + streaming
-- **Implementation:**
-  - Override `XMLHttpRequest`
-  - `responseText` getter hook
-  - Inject script into page realm
-- **Result:** Successfully captured API responses ✅
+### Architecture
+- **Export system unified** — `exportSnapshotAsFormat()` now tries messageStore first (live DOM data with condense), falls back to storage snapshot. Removed orphaned `GRA_EXPORT_STORE_MD/JSON` handlers.
+- **`finalizeMessage()` integrated into `rebuildNavigation()`** — messageStore stays populated during browsing, not just at export time.
+- **`condenseObserver` removed** — global `MutationObserver` on `document.body` with `subtree:true` was never disconnected and is no longer needed.
+- **`overlay-renderer.js` deleted** — dead code, incompatible DOM structure with actual `runCondenseV75()`.
+- **`condense-engine.js` removed from manifest** — 4,254 lines loaded but unused (condense disabled by default). File kept in repo.
+- **`gra-fetch-hook.js` removed from manifest** — MAIN world script, bridge to isolated world never connected. File kept in repo.
 
----
-
-### 2. Content script isolation
-
-- **Root Cause:** Chrome isolated world
-- **Implementation:**
-  - Inject script via `<script src="chrome-extension://...">`
-- **Result:** Access to page-level APIs ✅
-
----
-
-### 3. Non-JSON response (batchexecute)
-
-- **Root Cause:** Internal Google protocol
-- **Implementation:**
-  - Line-by-line parsing
-  - Nested JSON decoding
-- **Result:** Extracted readable text ✅
-
----
-
-### 4. Streaming responses
-
-- **Root Cause:** Incremental LLM output
-- **Implementation:**
-  - Observed chunk growth
-- **Result:** Partial — final lock not implemented ⚠️
+### UX
+- **Selection toolbar simplified** — reduced from 8 buttons to 2 (引用 + 複製).
+- **Quote button dual-mode** — Click: insert into Gemini input. Shift+Click: save to citation clipboard.
+- **Citation clipboard collapses** — empty state shows as small "引用暫存" label; expands when quotes exist.
+- **Auto-clear on insert** — quotes are removed from clipboard after being inserted into input.
 
 ---
 
@@ -51,35 +33,33 @@
 
 | Capability | Status |
 |---|---|
-| API interception | ✅ |
-| batchexecute parsing | ✅ |
-| Text extraction | ✅ |
-| Extraction stability | ❌ |
+| Sidebar navigation | ✅ |
+| Selection toolbar | ✅ |
+| Citation clipboard | ✅ |
+| Page search | ✅ |
+| Store search | ✅ |
+| Conversation export (MD/TXT/JSON) | ✅ |
+| Conversation persistence (journal + snapshot) | ✅ |
+| XHR interception | ✅ (file in repo, loaded via manifest) |
+| Condense engine | ⏸️ disabled (file in repo, not loaded) |
+| Fetch hook | ⏸️ disabled (file in repo, not loaded) |
 
 ---
 
-## Known Issues
+## Known Remaining Issues
 
-1. Extraction instability
-2. Streaming duplication
-3. Over-engineered condense logic
-4. UI regression
+1. MutationObserver root may go stale on SPA navigation
+2. `messageStore` grows without eviction in long sessions
+3. Auto-save interval captures stale settings reference
+4. `innerHTML` usage in condense/search (low risk — condense disabled)
 
 ---
 
 ## Current Status
 
-- **Condense feature: ⏸️ disabled by default** (showMessageCondense = false)
-- Reason: extraction instability; stable approach TBD
-
-## Next Phase
-
-1. Stable extraction approach (non-reverse-engineering)
-2. Lite Condense (UX-first)
-3. UI rebuild
-4. Remove XHR dependency (for production)
-
----
+- **Version: 2.3.0**
+- **Condense feature: ⏸️ disabled** (showMessageCondense = false, engine not loaded)
+- All core features stable and tested
 
 ## Core Principles
 

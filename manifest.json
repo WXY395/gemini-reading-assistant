@@ -2,8 +2,8 @@
   "//_comment": "Gemini Reading Assistant - Chrome Extension (Manifest V3)",
   "manifest_version": 3,
   "name": "Gemini Reading Assistant",
-  "description": "Personal helper tools for reading on Gemini web. V1.",
-  "version": "1.0.0",
+  "description": "Personal reading assistant for Google Gemini conversations.",
+  "version": "2.3.0",
   
   "action": {
     "default_title": "Gemini Reading Assistant",
