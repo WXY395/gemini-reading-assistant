@@ -3968,14 +3968,9 @@ const SelectionToolbarModule = (() => {
     const btnAddQuote = document.createElement("button");
     btnAddQuote.type = "button";
     btnAddQuote.className = "gra-selection-toolbar__button";
-    btnAddQuote.textContent = "加入引用";
-    btnAddQuote.addEventListener("click", handleAddQuoteClick);
-
-    const btnExplain = document.createElement("button");
-    btnExplain.type = "button";
-    btnExplain.className = "gra-selection-toolbar__button";
-    btnExplain.textContent = "解釋這段";
-    btnExplain.addEventListener("click", handleExplainClick);
+    btnAddQuote.textContent = "引用";
+    btnAddQuote.title = "點擊：插入對話框 ｜ Shift+點擊：存入引用暫存庫";
+    btnAddQuote.addEventListener("click", handleQuoteClick);
 
     const btnCopy = document.createElement("button");
     btnCopy.type = "button";
@@ -3984,31 +3979,9 @@ const SelectionToolbarModule = (() => {
     btnCopy.addEventListener("click", handleCopyClick);
 
     row1.appendChild(btnAddQuote);
-    row1.appendChild(btnExplain);
     row1.appendChild(btnCopy);
 
-    const row2 = document.createElement("div");
-    row2.className = "gra-selection-toolbar__row";
-
-    const templateButtons = [
-      { text: "白話解釋", handler: handlePlainExplainClick },
-      { text: "幫我舉例", handler: handleExampleClick },
-      { text: "條列整理", handler: handleBulletSummaryClick },
-      { text: "幫我反駁", handler: handleCounterArgumentClick },
-      { text: "Cursor 指令", handler: handleCursorInstructionClick }
-    ];
-
-    templateButtons.forEach(({ text, handler }) => {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "gra-selection-toolbar__button";
-      btn.textContent = text;
-      btn.addEventListener("click", handler);
-      row2.appendChild(btn);
-    });
-
     buttonsContainer.appendChild(row1);
-    buttonsContainer.appendChild(row2);
     toolbar.appendChild(buttonsContainer);
     document.body.appendChild(toolbar);
 
@@ -4257,64 +4230,30 @@ const SelectionToolbarModule = (() => {
   }
 
   /**
-   * 「加入引用」按鈕：
-   * 將選取文字加入引用暫存夾，並記錄來源資訊供回跳使用。
+   * 「引用」按鈕（雙模式）：
+   * - 普通點擊：將選取文字直接插入 Gemini 對話框
+   * - Shift+點擊：將選取文字存入引用暫存庫（Knowledge Cards）
    */
-  function handleAddQuoteClick() {
+  function handleQuoteClick(event) {
     if (!currentSelectionText) return;
 
-    const source =
-      currentRange && findSourceContainerFromRange(currentRange);
+    if (event.shiftKey) {
+      // Shift+點擊：存入引用暫存庫
+      const source =
+        currentRange && findSourceContainerFromRange(currentRange);
 
-    CitationClipboardModule.addQuote({
-      text: currentSelectionText,
-      sourceUrl: source?.sourceUrl,
-      sourceMessageId: source?.sourceMessageId,
-      sourceTextPreview: source?.sourceTextPreview,
-      sourceSelectorHint: source?.sourceSelectorHint
-    });
+      CitationClipboardModule.addQuote({
+        text: currentSelectionText,
+        sourceUrl: source?.sourceUrl,
+        sourceMessageId: source?.sourceMessageId,
+        sourceTextPreview: source?.sourceTextPreview,
+        sourceSelectorHint: source?.sourceSelectorHint
+      });
+    } else {
+      // 普通點擊：插入 Gemini 對話框
+      GeminiInputIntegrationModule.insertTextIntoInput(currentSelectionText);
+    }
     hideToolbar();
-  }
-
-  /**
-   * 「解釋這段」按鈕：
-   * 將選取文字以解釋模板插入 Gemini 輸入框，插入後隱藏工具列。
-   */
-  function handleExplainClick() {
-    if (!currentSelectionText) return;
-    const template = GeminiInputIntegrationModule.buildExplainTemplate(currentSelectionText);
-    GeminiInputIntegrationModule.insertTextIntoInput(template);
-    hideToolbar();
-  }
-
-  /**
-   * 模板按鈕通用邏輯：建立模板、插入輸入框、隱藏工具列。
-   */
-  function handleTemplateClick(buildFn) {
-    if (!currentSelectionText) return;
-    const template = buildFn(currentSelectionText);
-    GeminiInputIntegrationModule.insertTextIntoInput(template);
-    hideToolbar();
-  }
-
-  function handlePlainExplainClick() {
-    handleTemplateClick(GeminiInputIntegrationModule.buildPlainExplainTemplate);
-  }
-
-  function handleExampleClick() {
-    handleTemplateClick(GeminiInputIntegrationModule.buildExampleTemplate);
-  }
-
-  function handleBulletSummaryClick() {
-    handleTemplateClick(GeminiInputIntegrationModule.buildBulletSummaryTemplate);
-  }
-
-  function handleCounterArgumentClick() {
-    handleTemplateClick(GeminiInputIntegrationModule.buildCounterArgumentTemplate);
-  }
-
-  function handleCursorInstructionClick() {
-    handleTemplateClick(GeminiInputIntegrationModule.buildCursorInstructionTemplate);
   }
 
   /**
