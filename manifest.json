@@ -32,18 +32,11 @@
       "run_at": "document_start"
     },
     {
-      "matches": ["https://gemini.google.com/*"],
-      "js": ["gra-fetch-hook.js"],
-      "run_at": "document_start",
-      "world": "MAIN"
-    },
-    {
       "matches": [
         "https://gemini.google.com/*"
       ],
       "js": [
         "utils/storage.js",
-        "condense-engine.js",
         "content.js"
       ],
       "css": [

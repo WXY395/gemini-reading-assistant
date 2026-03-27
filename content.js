@@ -6913,9 +6913,6 @@ const GeminiReadingAssistant = (() => {
     });
 
     console.info("[GRA] Gemini Reading Assistant content script initialized.");
-
-    // ---- TEST BRIDGE (開發用，正式版移除) ----
-    // (test bridge moved outside IIFE)
   }
 
   return {
