@@ -6268,34 +6268,8 @@ function ensureAllMessagesFinalized() {
   });
 }
 
-// ---- Condense Observer（監聽 condense-block 延遲渲染，自動補寫 messageStore）----
-const condenseObserver = new MutationObserver(function (mutations) {
-  mutations.forEach(function (m) {
-    m.addedNodes.forEach(function (node) {
-      if (!(node instanceof HTMLElement)) return;
-
-      // 直接匹配 .gra-condense-root
-      if (node.classList && node.classList.contains("gra-condense-root")) {
-        var messageEl = node.closest("[data-gra-message-id]");
-        if (!messageEl) return;
-        finalizeMessage(messageEl, "gemini");
-        return;
-      }
-
-      // 子樹中包含 .gra-condense-root
-      var blocks = node.querySelectorAll ? node.querySelectorAll("[data-gra-condense-root]") : [];
-      blocks.forEach(function (block) {
-        var msgEl = block.closest("[data-gra-message-id]");
-        if (!msgEl) return;
-        finalizeMessage(msgEl, "gemini");
-      });
-    });
-  });
-});
-
-if (typeof document !== "undefined" && document.body) {
-  condenseObserver.observe(document.body, { childList: true, subtree: true });
-}
+// condenseObserver 已移除 — finalizeMessage 改由 rebuildNavigation() 統一觸發，
+// 不再需要額外的全域 MutationObserver。
 
 /**
  * 從 messageStore 匯出 Markdown（給人看）。
@@ -6785,8 +6759,8 @@ const GeminiReadingAssistant = (() => {
           sendResponse({ settings: currentSettings });
           break;
         case "GRA_UPDATE_SETTINGS":
+          // popup 已將設定寫入 storage，這裡只需套用到記憶體中的模組
           applySettings(message.payload || {});
-          saveSettings(currentSettings);
           sendResponse({ ok: true });
           break;
         case "GRA_INSERT_CITATION":

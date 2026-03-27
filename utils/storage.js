@@ -38,8 +38,15 @@
    * 從 chrome.storage.local 非同步讀取資料的輔助函式。
    */
   function readFromStorage(keys) {
-    return new Promise((resolve) => {
-      chrome.storage.local.get(keys, (result) => resolve(result || {}));
+    return new Promise((resolve, reject) => {
+      chrome.storage.local.get(keys, (result) => {
+        if (chrome.runtime.lastError) {
+          console.warn("[GRA][storage] read error:", chrome.runtime.lastError.message);
+          reject(chrome.runtime.lastError);
+          return;
+        }
+        resolve(result || {});
+      });
     });
   }
 
@@ -47,8 +54,15 @@
    * 寫入 chrome.storage.local 的輔助函式。
    */
   function writeToStorage(object) {
-    return new Promise((resolve) => {
-      chrome.storage.local.set(object, () => resolve());
+    return new Promise((resolve, reject) => {
+      chrome.storage.local.set(object, () => {
+        if (chrome.runtime.lastError) {
+          console.warn("[GRA][storage] write error:", chrome.runtime.lastError.message);
+          reject(chrome.runtime.lastError);
+          return;
+        }
+        resolve();
+      });
     });
   }
 
