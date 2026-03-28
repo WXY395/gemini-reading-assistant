@@ -32,7 +32,9 @@
     showSelectionToolbar: true,
     showGeminiInputInsertion: true,
     showPageSearch: true,
-    showMessageCondense: false
+    showMessageCondense: false,
+    geminiPlan: "pro-128k",
+    proAutoSend: false
   };
 
   /**

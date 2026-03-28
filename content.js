@@ -337,6 +337,8 @@ const SidebarNavigationModule = (() => {
 
   // 模組級 settings 參照（由 init/update 寫入，供 runCondenseV75 等內部函式使用）
   let _moduleSettings = null;
+  // Pro 狀態（由 init 寫入，供 Pro 功能判斷）
+  let _proEnabled = false;
 
   // 供 diagnostics 使用：最後使用的 selector 策略
   let lastStrategy = "none";
@@ -1291,6 +1293,8 @@ const SidebarNavigationModule = (() => {
       listEl.className = "gra-sidebar-nav__list";
       bodyEl.appendChild(listEl);
     }
+
+    ensureUsageMeter();
 
     return { container, listEl };
   }
@@ -3194,6 +3198,72 @@ const SidebarNavigationModule = (() => {
    * 根據目前的訊息節點重建側邊導覽清單。
    * 會清空舊項目並重新建立，但不會重複插入外層容器。
    */
+  // ---- Context Usage Meter (Pro) ----
+
+  function ensureUsageMeter() {
+    if (!_proEnabled || !bodyEl) return;
+    if (document.getElementById("gra-usage-meter")) return;
+    var meter = document.createElement("div");
+    meter.id = "gra-usage-meter";
+    meter.className = "gra-usage-meter";
+    meter.innerHTML =
+      '<div class="gra-usage-meter__bar"><div class="gra-usage-meter__fill"></div></div>' +
+      '<div class="gra-usage-meter__label"></div>';
+    bodyEl.appendChild(meter);
+  }
+
+  function updateUsageMeter() {
+    if (!_proEnabled) return;
+    var meter = document.getElementById("gra-usage-meter");
+    if (!meter) return;
+
+    var totalChars = 0;
+    messageStore.forEach(function (msg) { totalChars += (msg.text || "").length; });
+    var totalRounds = Math.ceil(messageStore.size / 2);
+
+    var PLAN_LIMITS = {
+      "flash-32k": 32000,
+      "pro-128k": 128000,
+      "ultra-1m": 1000000
+    };
+    var plan = (_moduleSettings && _moduleSettings.geminiPlan) || "pro-128k";
+    var limit = typeof plan === "number" ? plan : (PLAN_LIMITS[plan] || 128000);
+
+    var estimatedTokens = Math.round(totalChars * 1.5);
+    var usagePercent = Math.min(100, Math.round((estimatedTokens / limit) * 100));
+
+    var fill = meter.querySelector(".gra-usage-meter__fill");
+    var label = meter.querySelector(".gra-usage-meter__label");
+
+    fill.style.width = usagePercent + "%";
+    fill.className = "gra-usage-meter__fill" +
+      (usagePercent >= 75 ? " gra-usage-meter__fill--danger" :
+       usagePercent >= 50 ? " gra-usage-meter__fill--warning" : "");
+
+    var charsK = Math.round(totalChars / 1000);
+    var hint = "";
+    if (usagePercent >= 75) hint = " · 建議匯出並開新對話";
+    else if (usagePercent >= 50) hint = " · 建議準備快照";
+
+    label.textContent = totalRounds + " 輪 · 約 " + charsK + "K 字 · " + usagePercent + "%" + hint;
+
+    // Handoff button at 75%+
+    if (usagePercent >= 75) {
+      var handoffBtn = meter.querySelector(".gra-usage-meter__handoff");
+      if (!handoffBtn) {
+        handoffBtn = document.createElement("button");
+        handoffBtn.type = "button";
+        handoffBtn.className = "gra-usage-meter__handoff";
+        handoffBtn.textContent = "一鍵銜接新對話";
+        handoffBtn.addEventListener("click", snapshotHandoff);
+        meter.appendChild(handoffBtn);
+      }
+    } else {
+      var existing = meter.querySelector(".gra-usage-meter__handoff");
+      if (existing) existing.remove();
+    }
+  }
+
   function rebuildNavigation() {
     GraReadingPhase1Ux.clearFocusForRebuild();
     GraReadingPhase1Ux.ensureCollapsedExpandClickDelegate();
@@ -3285,6 +3355,7 @@ const SidebarNavigationModule = (() => {
 
     applyFilter();
     updateActiveItem();
+    updateUsageMeter();
   }
 
   /**
@@ -3723,6 +3794,7 @@ const SidebarNavigationModule = (() => {
      */
     init(settings) {
       _moduleSettings = settings || _moduleSettings;
+      if (settings && settings._proEnabled !== undefined) _proEnabled = !!settings._proEnabled;
       console.info("[GRA][sidebar] init called", {
         extensionEnabled: settings ? settings.extensionEnabled : undefined,
         showNavigator: settings ? settings.showNavigator : undefined,
@@ -6745,6 +6817,7 @@ const GeminiReadingAssistant = (() => {
     // Pro license check
     var license = await GRAStorage.getLicense();
     var proEnabled = GRAStorage.isPro(license);
+    currentSettings._proEnabled = proEnabled;
     console.info("[GRA] Pro status:", proEnabled);
 
     // 初次依設定初始化各模組。
