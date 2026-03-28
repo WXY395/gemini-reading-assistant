@@ -740,6 +740,9 @@
           inputRow.style.display = "none";
           activeRow.style.display = "flex";
           activeText.textContent = key.slice(0, 12) + "...";
+          if (planRow) planRow.style.display = "flex";
+          // Notify content script to enable Pro UI immediately
+          notifyActiveTab({ _proEnabled: true });
         } else {
           statusEl.textContent = "授權碼無效: " + (result.error || "unknown");
           statusEl.style.color = "#f87171";
@@ -756,7 +759,10 @@
         statusEl.style.color = "";
         inputRow.style.display = "flex";
         activeRow.style.display = "none";
+        if (planRow) planRow.style.display = "none";
         if (keyInput) keyInput.value = "";
+        // Notify content script to tear down Pro UI immediately
+        notifyActiveTab({ _proEnabled: false });
       });
     }
   }

@@ -4042,11 +4042,19 @@ const SidebarNavigationModule = (() => {
      */
     update(settings) {
       _moduleSettings = settings || _moduleSettings;
+      if (settings && settings._proEnabled !== undefined) _proEnabled = !!settings._proEnabled;
       if (!settings || !settings.extensionEnabled || !settings.showNavigator) {
         this.destroy();
       } else if (!container) {
         this.init(settings);
       } else {
+        // Pro toggle may have changed — remove/add meter and recall DOM
+        if (!_proEnabled) {
+          var meter = document.getElementById("gra-usage-meter");
+          if (meter) meter.remove();
+          var recall = document.getElementById("gra-recall-btn");
+          if (recall) recall.remove();
+        }
         scheduleRescan();
       }
     },
@@ -6970,6 +6978,12 @@ const GeminiReadingAssistant = (() => {
   async function applySettings(newSettings) {
     currentSettings = { ...currentSettings, ...newSettings };
 
+    // Pro status toggle — update feature gate and rebuild sidebar to add/remove Pro UI
+    if (newSettings._proEnabled !== undefined) {
+      updateProFeatures(!!newSettings._proEnabled);
+      // Sidebar will pick up new _proEnabled from currentSettings on next rebuild
+    }
+
     if (!currentSettings.extensionEnabled) {
       ConversationAutoSaveModule.stopAutoSave();
       SidebarNavigationModule.destroy();
@@ -7150,27 +7164,37 @@ const GeminiReadingAssistant = (() => {
       }
     });
 
-    // ---- Pro: Check for pending handoff from previous conversation ----
-    if (proEnabled) {
-      (async function () {
-        try {
-          var stored = await GRAStorage.readFromStorage(["gra_pending_handoff"]);
-          var handoff = stored.gra_pending_handoff;
-          if (handoff && handoff.prompt && (Date.now() - handoff.createdAt) < 60000) {
-            await GRAStorage.writeToStorage({ gra_pending_handoff: null });
-            // Opt-3: Apply geminiPlan from handoff if present
-            if (handoff.geminiPlan) {
-              await GRAStorage.saveSettings({ geminiPlan: handoff.geminiPlan });
-            }
-            setTimeout(function () {
-              GeminiInputIntegrationModule.insertTextIntoInput(handoff.prompt);
-            }, 2000);
-          }
-        } catch (e) {
-          console.warn("[GRA][handoff] pickup error:", e);
+    // ---- Handoff: always clean up stale data (privacy safety net) ----
+    (async function () {
+      try {
+        var stored = await GRAStorage.readFromStorage(["gra_pending_handoff"]);
+        var handoff = stored.gra_pending_handoff;
+        if (!handoff) return;
+
+        var age = Date.now() - (handoff.createdAt || 0);
+
+        // Stale handoff (>60s) — silently purge for privacy
+        if (age >= 60000) {
+          await GRAStorage.writeToStorage({ gra_pending_handoff: null });
+          return;
         }
-      })();
-    }
+
+        // Fresh handoff — only consume if Pro
+        if (proEnabled && handoff.prompt) {
+          await GRAStorage.writeToStorage({ gra_pending_handoff: null });
+          if (handoff.geminiPlan) {
+            await GRAStorage.saveSettings({ geminiPlan: handoff.geminiPlan });
+          }
+          setTimeout(function () {
+            GeminiInputIntegrationModule.insertTextIntoInput(handoff.prompt);
+          }, 2000);
+        }
+      } catch (e) {
+        // Fail-safe: always try to clear on error
+        try { await GRAStorage.writeToStorage({ gra_pending_handoff: null }); } catch (_) {}
+        console.warn("[GRA][handoff] pickup error:", e);
+      }
+    })();
 
     console.info("[GRA] Gemini Reading Assistant content script initialized.");
   }
