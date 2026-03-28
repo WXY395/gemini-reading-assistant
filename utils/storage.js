@@ -427,6 +427,47 @@
     return true;
   }
 
+  // ---- Memory Pins (Pro) ----------------------------------------------------
+
+  var MEMORY_PINS_PREFIX = "gra_memory_pins_";
+
+  async function getMemoryPins(conversationKey) {
+    var key = MEMORY_PINS_PREFIX + conversationKey;
+    var stored = await readFromStorage([key]);
+    return stored[key] || [];
+  }
+
+  async function saveMemoryPins(conversationKey, pins) {
+    var key = MEMORY_PINS_PREFIX + conversationKey;
+    await writeToStorage({ [key]: pins });
+  }
+
+  async function addMemoryPin(conversationKey, pin) {
+    var pins = await getMemoryPins(conversationKey);
+    // Deduplicate by text
+    if (pins.some(function (p) { return p.text === pin.text; })) return pins;
+    pins.push({
+      id: "pin-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6),
+      text: pin.text,
+      sourceMessageId: pin.sourceMessageId || null,
+      type: pin.type || "phase", // Opt-2: "core" (核心目標) | "phase" (階段性結論)
+      pinnedAt: Date.now()
+    });
+    await saveMemoryPins(conversationKey, pins);
+    return pins;
+  }
+
+  async function removeMemoryPin(conversationKey, pinId) {
+    var pins = await getMemoryPins(conversationKey);
+    var filtered = pins.filter(function (p) { return p.id !== pinId; });
+    await saveMemoryPins(conversationKey, filtered);
+    return filtered;
+  }
+
+  async function clearMemoryPins(conversationKey) {
+    await saveMemoryPins(conversationKey, []);
+  }
+
   // 將工具暴露到全域命名空間，以便在 content script / popup 中共用。
   // 若 window 不存在（例如 background service worker），則僅輸出為自執行函式內部工具。
   if (typeof window !== "undefined") {
@@ -457,7 +498,12 @@
       saveLicense,
       clearLicense,
       verifyLicenseOnline,
-      isPro
+      isPro,
+      getMemoryPins,
+      saveMemoryPins,
+      addMemoryPin,
+      removeMemoryPin,
+      clearMemoryPins
     };
   }
 })();

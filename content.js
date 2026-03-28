@@ -9,6 +9,14 @@
 // - 初始化各功能模組（右側導航、浮動工具列、引用暫存夾、插入 Gemini 輸入框、本頁關鍵字搜尋）
 // - 監聽 popup / background 發送的控制訊息
 
+// ---- DOM 彈性緩衝層（集中 Selector 定義，方便 Gemini DOM 更新時統一維護）----
+var GRASelectors = {
+  SEND_BUTTON: '[aria-label="傳送訊息"], [data-testid="send-button"], button.send-button, [aria-label="Send message"]',
+  MESSAGE_CONTAINER: '[data-message-id], [data-qa="message"], [data-qa="conversation-turn"], article',
+  RICH_TEXTAREA: 'rich-textarea',
+  CONTENTEDITABLE: "[contenteditable='true']"
+};
+
 // ---- 型別與常數定義 --------------------------------------------------------
 
 /**
@@ -1295,6 +1303,7 @@ const SidebarNavigationModule = (() => {
     }
 
     ensureUsageMeter();
+    ensureRecallButton();
 
     return { container, listEl };
   }
@@ -3264,6 +3273,56 @@ const SidebarNavigationModule = (() => {
     }
   }
 
+  // ---- Recall Button (Pro) ----
+
+  function ensureRecallButton() {
+    if (!_proEnabled || !bodyEl) return;
+    if (document.getElementById("gra-recall-btn")) return;
+
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.id = "gra-recall-btn";
+    btn.className = "gra-sidebar-nav__recall-btn";
+    btn.textContent = "\uD83E\uDDE0 喚醒記憶";
+    btn.title = "將已釘選的重點注入對話，喚醒 AI 記憶";
+    btn.style.display = "none";
+    btn.addEventListener("click", async function () {
+      var convKey = detectConversationKey();
+      var pins = await GRAStorage.getMemoryPins(convKey);
+      if (!pins.length) return;
+
+      // Opt-2: Sort by type weight — core goals first, then phase conclusions
+      var sorted = pins.slice().sort(function (a, b) {
+        var w = { core: 0, phase: 1 };
+        return (w[a.type] || 1) - (w[b.type] || 1);
+      });
+
+      var segments = sorted.map(function (p, i) {
+        var prefix = p.type === "core" ? "[核心目標] " : "";
+        return (i + 1) + ". " + prefix + p.text;
+      });
+      var prompt =
+        "以下是我們目前討論的重點摘要，請重新聚焦：\n\n" +
+        segments.join("\n\n") +
+        "\n\n請基於以上重點繼續回答。";
+      GeminiInputIntegrationModule.insertTextIntoInput(prompt);
+    });
+
+    bodyEl.appendChild(btn);
+  }
+
+  async function updateRecallButton() {
+    var btn = document.getElementById("gra-recall-btn");
+    if (!btn) return;
+    var convKey = detectConversationKey();
+    var pins = await GRAStorage.getMemoryPins(convKey);
+    btn.style.display = pins.length > 0 ? "block" : "none";
+    var coreCount = pins.filter(function (p) { return p.type === "core"; }).length;
+    var label = "\uD83E\uDDE0 喚醒記憶 (" + pins.length + ")";
+    if (coreCount > 0) label += " · " + coreCount + " 核心";
+    btn.textContent = label;
+  }
+
   function rebuildNavigation() {
     GraReadingPhase1Ux.clearFocusForRebuild();
     GraReadingPhase1Ux.ensureCollapsedExpandClickDelegate();
@@ -3338,6 +3397,59 @@ const SidebarNavigationModule = (() => {
 
       rowEl.appendChild(collapseBtn);
       rowEl.appendChild(itemEl);
+
+      // ---- Pro: Condense button (Gemini messages only) ----
+      if (msgType === "gemini" && _proEnabled) {
+        var condenseBtn = document.createElement("button");
+        condenseBtn.type = "button";
+        condenseBtn.className = "gra-sidebar-nav__condense-btn";
+        condenseBtn.textContent = "濃";
+        condenseBtn.title = "批判性濃縮：找出邏輯漏洞與決策基點";
+        condenseBtn.addEventListener("click", function (e) {
+          e.stopPropagation();
+          var text = __gra_getSourceText(node);
+          if (!text || text.length < 30) return;
+          var prompt =
+            "請用 3-5 個重點濃縮以下內容。特別要求：請找出文中潛在的邏輯漏洞、被忽略的反面因素，並列出對我最有利的決策基點：\n---\n" +
+            text + "\n---";
+          GeminiInputIntegrationModule.insertTextIntoInput(prompt);
+
+          if (_moduleSettings && _moduleSettings.proAutoSend) {
+            setTimeout(function () {
+              var sendBtn = document.querySelector(
+                GRASelectors.SEND_BUTTON
+              );
+              if (sendBtn) sendBtn.click();
+            }, 200);
+          }
+        });
+        rowEl.appendChild(condenseBtn);
+      }
+
+      // ---- Pro: Memory Pin button ----
+      if (_proEnabled) {
+        var pinBtn = document.createElement("button");
+        pinBtn.type = "button";
+        pinBtn.className = "gra-sidebar-nav__pin-btn";
+        pinBtn.textContent = "\uD83D\uDCCC";
+        pinBtn.title = "記住此訊息重點（長按選擇類型）";
+        pinBtn.addEventListener("click", async function (e) {
+          e.stopPropagation();
+          var text = __gra_getSourceText(node);
+          var summary = text.length > 200 ? text.slice(0, 197) + "..." : text;
+          var convKey = detectConversationKey();
+          await GRAStorage.addMemoryPin(convKey, {
+            text: summary,
+            sourceMessageId: id,
+            type: "phase"
+          });
+          pinBtn.textContent = "\u2705";
+          setTimeout(function () { pinBtn.textContent = "\uD83D\uDCCC"; }, 1500);
+          updateRecallButton();
+        });
+        rowEl.appendChild(pinBtn);
+      }
+
       listEl.appendChild(rowEl);
       items.push({
         id,
@@ -3356,6 +3468,7 @@ const SidebarNavigationModule = (() => {
     applyFilter();
     updateActiveItem();
     updateUsageMeter();
+    updateRecallButton();
   }
 
   /**
