@@ -374,6 +374,48 @@
     await writeToStorage({ [LICENSE_KEY]: null });
   }
 
+  /**
+   * Verify license key via Gumroad API.
+   * @param {string} key - License key (e.g., GRA-PRO-XXXXXXXX)
+   * @param {string} productId - Gumroad product permalink
+   * @returns {Promise<{valid: boolean, error?: string}>}
+   */
+  async function verifyLicenseOnline(key, productId) {
+    try {
+      var response = await fetch("https://api.gumroad.com/v2/licenses/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          product_id: productId,
+          license_key: key,
+          increment_uses_count: "true"
+        })
+      });
+
+      if (!response.ok) {
+        return { valid: false, error: "network_error" };
+      }
+
+      var data = await response.json();
+
+      if (data.success) {
+        var licenseData = {
+          code: key,
+          valid: true,
+          verifiedAt: Date.now(),
+          purchaseEmail: data.purchase?.email || "",
+          uses: data.uses || 1
+        };
+        await saveLicense(licenseData);
+        return { valid: true };
+      } else {
+        return { valid: false, error: data.message || "invalid_key" };
+      }
+    } catch (e) {
+      return { valid: false, error: "fetch_failed" };
+    }
+  }
+
   function isPro(license) {
     if (!license || !license.valid) return false;
     if (license.verifiedAt) {
@@ -412,6 +454,7 @@
       getLicense,
       saveLicense,
       clearLicense,
+      verifyLicenseOnline,
       isPro
     };
   }
