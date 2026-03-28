@@ -682,6 +682,70 @@
     }
   }
 
+  // ---- License UI (Pro) -----------------------------------------------------
+
+  var GUMROAD_PRODUCT_ID = "YOUR_PRODUCT_ID"; // TODO: replace after Gumroad setup
+
+  async function initLicenseUI() {
+    var statusEl = document.getElementById("gra-license-status");
+    var inputRow = document.getElementById("gra-license-input-row");
+    var activeRow = document.getElementById("gra-license-active-row");
+    var activeText = document.getElementById("gra-license-active-text");
+    var keyInput = document.getElementById("gra-license-key");
+    var activateBtn = document.getElementById("gra-btn-activate");
+    var deactivateBtn = document.getElementById("gra-btn-deactivate");
+
+    if (!statusEl || typeof GRAStorage === "undefined") return;
+
+    var license = await GRAStorage.getLicense();
+    var isPro = GRAStorage.isPro(license);
+
+    if (isPro) {
+      statusEl.textContent = "Pro 已啟用";
+      statusEl.style.color = "#4ade80";
+      inputRow.style.display = "none";
+      activeRow.style.display = "flex";
+      activeText.textContent = license.code.slice(0, 12) + "...";
+    } else {
+      statusEl.textContent = "Free 版本";
+      inputRow.style.display = "flex";
+      activeRow.style.display = "none";
+    }
+
+    if (activateBtn) {
+      activateBtn.addEventListener("click", async function () {
+        var key = (keyInput.value || "").trim();
+        if (!key) return;
+        activateBtn.disabled = true;
+        activateBtn.textContent = "驗證中...";
+        var result = await GRAStorage.verifyLicenseOnline(key, GUMROAD_PRODUCT_ID);
+        if (result.valid) {
+          statusEl.textContent = "Pro 已啟用";
+          statusEl.style.color = "#4ade80";
+          inputRow.style.display = "none";
+          activeRow.style.display = "flex";
+          activeText.textContent = key.slice(0, 12) + "...";
+        } else {
+          statusEl.textContent = "授權碼無效: " + (result.error || "unknown");
+          statusEl.style.color = "#f87171";
+          activateBtn.disabled = false;
+          activateBtn.textContent = "啟用";
+        }
+      });
+    }
+
+    if (deactivateBtn) {
+      deactivateBtn.addEventListener("click", async function () {
+        await GRAStorage.clearLicense();
+        statusEl.textContent = "Free 版本";
+        statusEl.style.color = "";
+        inputRow.style.display = "flex";
+        activeRow.style.display = "none";
+        if (keyInput) keyInput.value = "";
+      });
+    }
+  }
+
   // ---- 初始化流程 -----------------------------------------------------------
 
   document.addEventListener("DOMContentLoaded", async () => {
@@ -693,6 +757,7 @@
     fetchAndRenderDiagnostics(elements);
     fetchAndRenderJournalStatus(elements);
     renderKnowledgeCards(elements);
+    initLicenseUI();
   });
 })();
 

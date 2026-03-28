@@ -103,6 +103,29 @@
           頁面搜尋
         </button>
       </section>
+
+      <!-- Pro License -->
+      <section class="gra-popup-section" id="gra-license-section">
+        <div class="gra-popup-section__title">Pro</div>
+        <div id="gra-license-status" class="gra-popup-license__status">檢查中...</div>
+        <div id="gra-license-input-row" class="gra-popup-license__row" style="display:none;">
+          <input
+            id="gra-license-key"
+            type="text"
+            placeholder="GRA-PRO-XXXXXXXX"
+            class="gra-popup-input"
+          />
+          <button id="gra-btn-activate" type="button" class="gra-popup-btn gra-popup-btn--sm">
+            啟用
+          </button>
+        </div>
+        <div id="gra-license-active-row" class="gra-popup-license__row" style="display:none;">
+          <span id="gra-license-active-text"></span>
+          <button id="gra-btn-deactivate" type="button" class="gra-popup-btn gra-popup-btn--sm gra-popup-btn--secondary">
+            取消授權
+          </button>
+        </div>
+      </section>
     </main>
 
     <footer class="gra-popup-footer">
