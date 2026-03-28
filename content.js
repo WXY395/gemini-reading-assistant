@@ -307,6 +307,73 @@ const GraReadingPhase1Ux = (() => {
 
 // ---- 模組骨架定義 ----------------------------------------------------------
 
+// ---- Snapshot Handoff (Pro) ------------------------------------------------
+
+/**
+ * Pro: 一鍵銜接 — 匯出重點摘要 + 環境快照 + 開新對話 + 注入延續提示詞。
+ * Opt-3: 一併傳遞 geminiPlan 設定值，確保新分頁 Usage Meter 使用正確計量。
+ */
+async function snapshotHandoff() {
+  var convKey = detectConversationKey();
+  var pins = typeof GRAStorage !== "undefined"
+    ? await GRAStorage.getMemoryPins(convKey)
+    : [];
+
+  var summary = "";
+
+  if (pins.length > 0) {
+    // Opt-2: Sort by weight (core first)
+    var sorted = pins.slice().sort(function (a, b) {
+      var w = { core: 0, phase: 1 };
+      return (w[a.type] || 1) - (w[b.type] || 1);
+    });
+    summary += "## 重點記憶\n\n";
+    sorted.forEach(function (p, i) {
+      var prefix = p.type === "core" ? "[核心目標] " : "";
+      summary += (i + 1) + ". " + prefix + p.text + "\n";
+    });
+    summary += "\n";
+  }
+
+  // Add last 3 exchanges from messageStore
+  var messages = Array.from(messageStore.values())
+    .sort(function (a, b) { return a.seq - b.seq; });
+  var lastMessages = messages.slice(-6);
+  if (lastMessages.length > 0) {
+    summary += "## 最近對話\n\n";
+    lastMessages.forEach(function (msg) {
+      var label = msg.role === "user" ? "使用者" : "Gemini";
+      var text = msg.text.length > 300 ? msg.text.slice(0, 297) + "..." : msg.text;
+      summary += "**" + label + ":** " + text + "\n\n";
+    });
+  }
+
+  var continuationPrompt =
+    "以下是上一輪對話的重點摘要和結論，請閱讀後繼續協助我：\n---\n" +
+    summary +
+    "---\n請確認你已理解以上內容，然後等待我的下一個問題。";
+
+  // Copy to clipboard as backup
+  try {
+    await navigator.clipboard.writeText(continuationPrompt);
+  } catch (_) {}
+
+  // Open new Gemini tab
+  window.open("https://gemini.google.com/app", "_blank");
+
+  // Opt-3: Store prompt + geminiPlan for new tab to pick up
+  if (typeof GRAStorage !== "undefined") {
+    var currentSettings = await GRAStorage.getSettings();
+    await GRAStorage.writeToStorage({
+      gra_pending_handoff: {
+        prompt: continuationPrompt,
+        geminiPlan: currentSettings.geminiPlan || "pro-128k",
+        createdAt: Date.now()
+      }
+    });
+  }
+}
+
 /**
  * 右側段落節點導航模組。
  *
@@ -7076,6 +7143,28 @@ const GeminiReadingAssistant = (() => {
           break;
       }
     });
+
+    // ---- Pro: Check for pending handoff from previous conversation ----
+    if (proEnabled) {
+      (async function () {
+        try {
+          var stored = await GRAStorage.readFromStorage(["gra_pending_handoff"]);
+          var handoff = stored.gra_pending_handoff;
+          if (handoff && handoff.prompt && (Date.now() - handoff.createdAt) < 60000) {
+            await GRAStorage.writeToStorage({ gra_pending_handoff: null });
+            // Opt-3: Apply geminiPlan from handoff if present
+            if (handoff.geminiPlan) {
+              await GRAStorage.saveSettings({ geminiPlan: handoff.geminiPlan });
+            }
+            setTimeout(function () {
+              GeminiInputIntegrationModule.insertTextIntoInput(handoff.prompt);
+            }, 2000);
+          }
+        } catch (e) {
+          console.warn("[GRA][handoff] pickup error:", e);
+        }
+      })();
+    }
 
     console.info("[GRA] Gemini Reading Assistant content script initialized.");
   }
