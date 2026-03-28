@@ -700,12 +700,27 @@
     var license = await GRAStorage.getLicense();
     var isPro = GRAStorage.isPro(license);
 
+    // Plan selector (Pro only)
+    var planSelect = document.getElementById("gra-plan-select");
+    var planRow = document.getElementById("gra-plan-selector-row");
+
     if (isPro) {
       statusEl.textContent = "Pro 已啟用";
       statusEl.style.color = "#4ade80";
       inputRow.style.display = "none";
       activeRow.style.display = "flex";
       activeText.textContent = license.code.slice(0, 12) + "...";
+
+      // Show plan selector for Pro users
+      if (planRow) planRow.style.display = "flex";
+      if (planSelect) {
+        var currentSettings = await loadSettings();
+        if (currentSettings.geminiPlan) planSelect.value = currentSettings.geminiPlan;
+        planSelect.addEventListener("change", async function () {
+          await saveSettings({ geminiPlan: planSelect.value });
+          notifyActiveTab({ geminiPlan: planSelect.value });
+        });
+      }
     } else {
       statusEl.textContent = "Free 版本";
       inputRow.style.display = "flex";
