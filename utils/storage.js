@@ -34,7 +34,8 @@
     showPageSearch: true,
     showMessageCondense: false,
     geminiPlan: "pro-128k",
-    proAutoSend: false
+    proAutoSend: false,
+    proCondensePrompt: ""
   };
 
   /**

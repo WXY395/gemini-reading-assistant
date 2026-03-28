@@ -3476,9 +3476,11 @@ const SidebarNavigationModule = (() => {
           e.stopPropagation();
           var text = __gra_getSourceText(node);
           if (!text || text.length < 30) return;
-          var prompt =
-            "請用 3-5 個重點濃縮以下內容。特別要求：請找出文中潛在的邏輯漏洞、被忽略的反面因素，並列出對我最有利的決策基點：\n---\n" +
-            text + "\n---";
+          var defaultPrompt = "請用 3-5 個重點濃縮以下內容。特別要求：請找出文中潛在的邏輯漏洞、被忽略的反面因素，並列出對我最有利的決策基點：";
+          var userPrompt = (_moduleSettings && _moduleSettings.proCondensePrompt)
+            ? _moduleSettings.proCondensePrompt
+            : defaultPrompt;
+          var prompt = userPrompt + "\n---\n" + text + "\n---";
           GeminiInputIntegrationModule.insertTextIntoInput(prompt);
 
           if (_moduleSettings && _moduleSettings.proAutoSend) {

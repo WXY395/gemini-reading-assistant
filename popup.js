@@ -705,15 +705,32 @@
     var planRow = document.getElementById("gra-plan-selector-row");
     var planListenerAttached = false;
 
+    var condensePromptEl = document.getElementById("gra-condense-prompt");
+    var condensePromptRow = document.getElementById("gra-condense-prompt-row");
+    var condenseDebounceTimer = null;
+
     async function enablePlanSelector() {
       if (planRow) planRow.style.display = "flex";
+      if (condensePromptRow) condensePromptRow.style.display = "block";
       if (planSelect && !planListenerAttached) {
         var cs = await loadSettings();
         if (cs.geminiPlan) planSelect.value = cs.geminiPlan;
+        if (cs.proCondensePrompt && condensePromptEl) {
+          condensePromptEl.value = cs.proCondensePrompt;
+        }
         planSelect.addEventListener("change", async function () {
           await saveSettings({ geminiPlan: planSelect.value });
           notifyActiveTab({ geminiPlan: planSelect.value });
         });
+        if (condensePromptEl) {
+          condensePromptEl.addEventListener("input", function () {
+            clearTimeout(condenseDebounceTimer);
+            condenseDebounceTimer = setTimeout(async function () {
+              await saveSettings({ proCondensePrompt: condensePromptEl.value.trim() });
+              notifyActiveTab({ proCondensePrompt: condensePromptEl.value.trim() });
+            }, 500);
+          });
+        }
         planListenerAttached = true;
       }
     }
@@ -764,6 +781,7 @@
         inputRow.style.display = "flex";
         activeRow.style.display = "none";
         if (planRow) planRow.style.display = "none";
+        if (condensePromptRow) condensePromptRow.style.display = "none";
         if (keyInput) keyInput.value = "";
         // Notify content script to tear down Pro UI immediately
         notifyActiveTab({ _proEnabled: false });

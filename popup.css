@@ -379,3 +379,32 @@ body {
   word-break: break-all;
 }
 
+/* ---- Pro License UI ---- */
+.gra-popup-license__prompt-row {
+  margin-top: 8px;
+}
+
+.gra-popup-textarea {
+  width: 100%;
+  padding: 6px 8px;
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  color: #e2e8f0;
+  font-size: 11px;
+  font-family: inherit;
+  resize: vertical;
+  min-height: 48px;
+}
+
+.gra-popup-textarea:focus {
+  outline: none;
+  border-color: #6366f1;
+}
+
+.gra-popup-hint {
+  font-size: 10px;
+  color: #64748b;
+  margin-top: 3px;
+}
+
