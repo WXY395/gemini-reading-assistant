@@ -37,9 +37,15 @@
 | Selection toolbar | ✅ |
 | Citation clipboard | ✅ |
 | Page search | ✅ |
-| Store search | ✅ |
+| Store search | ✅ (Pro: unlimited) |
 | Conversation export (MD/TXT/JSON) | ✅ |
 | Conversation persistence (journal + snapshot) | ✅ |
+| **Pro: License system (Gumroad)** | ✅ |
+| **Pro: Context usage meter** | ✅ |
+| **Pro: One-click condense (批判性基點)** | ✅ |
+| **Pro: Memory pin/recall (動態權重)** | ✅ |
+| **Pro: Snapshot handoff (環境快照)** | ✅ |
+| **Pro: Gemini plan selector** | ✅ |
 | XHR interception | ❌ removed (reverse engineering risk) |
 | Condense engine | ⏸️ disabled (file in repo, not loaded) |
 | Fetch hook | ❌ removed (reverse engineering risk) |
@@ -57,9 +63,10 @@
 
 ## Current Status
 
-- **Version: 2.3.0**
-- **Condense feature: ⏸️ disabled** (showMessageCondense = false, engine not loaded)
-- All core features stable and tested
+- **Version: 3.0.0**
+- **Pro features: gated behind license verification (Gumroad API)**
+- **Condense feature: ⏸️ disabled in free tier** (showMessageCondense = false, engine not loaded)
+- All core features stable; Pro features integrated
 
 ## Core Principles
 
