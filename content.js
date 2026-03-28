@@ -4048,12 +4048,17 @@ const SidebarNavigationModule = (() => {
       } else if (!container) {
         this.init(settings);
       } else {
-        // Pro toggle may have changed — remove/add meter and recall DOM
+        // Pro toggle may have changed — immediately remove Pro-only DOM elements
         if (!_proEnabled) {
           var meter = document.getElementById("gra-usage-meter");
           if (meter) meter.remove();
           var recall = document.getElementById("gra-recall-btn");
           if (recall) recall.remove();
+          // Remove condense + pin buttons from existing rows immediately (don't wait for rescan debounce)
+          if (listEl) {
+            listEl.querySelectorAll(".gra-sidebar-nav__condense-btn, .gra-sidebar-nav__pin-btn")
+              .forEach(function (b) { b.remove(); });
+          }
         }
         scheduleRescan();
       }
@@ -7020,6 +7025,14 @@ const GeminiReadingAssistant = (() => {
     updateProFeatures(proEnabled);
     console.info("[GRA] Pro status:", proEnabled);
 
+    // Silent re-verify if license is in grace period (>30 days since last verify)
+    if (proEnabled && license && license.verifiedAt) {
+      var daysSince = (Date.now() - license.verifiedAt) / (1000 * 60 * 60 * 24);
+      if (daysSince > 30) {
+        GRAStorage.silentReVerify(license, "YOUR_PRODUCT_ID").catch(function () {});
+      }
+    }
+
     // 初次依設定初始化各模組。
     SidebarNavigationModule.init(currentSettings);
     SelectionToolbarModule.init(currentSettings);
@@ -7179,8 +7192,9 @@ const GeminiReadingAssistant = (() => {
           return;
         }
 
-        // Fresh handoff — only consume if Pro
-        if (proEnabled && handoff.prompt) {
+        // Fresh handoff — re-read license from storage (don't rely on stale closure)
+        var freshLicense = await GRAStorage.getLicense();
+        if (GRAStorage.isPro(freshLicense) && handoff.prompt) {
           await GRAStorage.writeToStorage({ gra_pending_handoff: null });
           if (handoff.geminiPlan) {
             await GRAStorage.saveSettings({ geminiPlan: handoff.geminiPlan });

@@ -380,9 +380,11 @@
    * Verify license key via Gumroad API.
    * @param {string} key - License key (e.g., GRA-PRO-XXXXXXXX)
    * @param {string} productId - Gumroad product permalink
+   * @param {object} [options] - { incrementUses: boolean } (default: true for first activation, false for re-verify)
    * @returns {Promise<{valid: boolean, error?: string}>}
    */
-  async function verifyLicenseOnline(key, productId) {
+  async function verifyLicenseOnline(key, productId, options) {
+    var incrementUses = (options && options.incrementUses !== undefined) ? options.incrementUses : true;
     try {
       var response = await fetch("https://api.gumroad.com/v2/licenses/verify", {
         method: "POST",
@@ -390,7 +392,7 @@
         body: new URLSearchParams({
           product_id: productId,
           license_key: key,
-          increment_uses_count: "true"
+          increment_uses_count: incrementUses ? "true" : "false"
         })
       });
 
@@ -422,9 +424,32 @@
     if (!license || !license.valid) return false;
     if (license.verifiedAt) {
       var daysSinceVerify = (Date.now() - license.verifiedAt) / (1000 * 60 * 60 * 24);
-      if (daysSinceVerify > 30) return false;
+      if (daysSinceVerify > 30) {
+        // Grace period: still return true but trigger silent re-verify in background
+        // This prevents legitimate users from being locked out
+        if (daysSinceVerify <= 37) return true; // 7-day grace
+        return false;
+      }
     }
     return true;
+  }
+
+  /**
+   * Silent background re-verify for expired licenses. Does NOT increment use count.
+   * Call this on init if license.verifiedAt is >30 days old.
+   */
+  async function silentReVerify(license, productId) {
+    if (!license || !license.code || !productId) return;
+    var daysSinceVerify = license.verifiedAt
+      ? (Date.now() - license.verifiedAt) / (1000 * 60 * 60 * 24)
+      : 999;
+    if (daysSinceVerify <= 30) return; // no need
+    var result = await verifyLicenseOnline(license.code, productId, { incrementUses: false });
+    if (!result.valid) {
+      // License revoked upstream — clear local
+      await clearLicense();
+    }
+    // If valid, verifyLicenseOnline already saved updated verifiedAt
   }
 
   // ---- Memory Pins (Pro) ----------------------------------------------------
@@ -498,6 +523,7 @@
       saveLicense,
       clearLicense,
       verifyLicenseOnline,
+      silentReVerify,
       isPro,
       getMemoryPins,
       saveMemoryPins,

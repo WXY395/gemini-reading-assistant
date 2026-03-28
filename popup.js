@@ -703,6 +703,20 @@
     // Plan selector (Pro only)
     var planSelect = document.getElementById("gra-plan-select");
     var planRow = document.getElementById("gra-plan-selector-row");
+    var planListenerAttached = false;
+
+    async function enablePlanSelector() {
+      if (planRow) planRow.style.display = "flex";
+      if (planSelect && !planListenerAttached) {
+        var cs = await loadSettings();
+        if (cs.geminiPlan) planSelect.value = cs.geminiPlan;
+        planSelect.addEventListener("change", async function () {
+          await saveSettings({ geminiPlan: planSelect.value });
+          notifyActiveTab({ geminiPlan: planSelect.value });
+        });
+        planListenerAttached = true;
+      }
+    }
 
     if (isPro) {
       statusEl.textContent = "Pro 已啟用";
@@ -710,17 +724,7 @@
       inputRow.style.display = "none";
       activeRow.style.display = "flex";
       activeText.textContent = license.code.slice(0, 12) + "...";
-
-      // Show plan selector for Pro users
-      if (planRow) planRow.style.display = "flex";
-      if (planSelect) {
-        var currentSettings = await loadSettings();
-        if (currentSettings.geminiPlan) planSelect.value = currentSettings.geminiPlan;
-        planSelect.addEventListener("change", async function () {
-          await saveSettings({ geminiPlan: planSelect.value });
-          notifyActiveTab({ geminiPlan: planSelect.value });
-        });
-      }
+      await enablePlanSelector();
     } else {
       statusEl.textContent = "Free 版本";
       inputRow.style.display = "flex";
@@ -740,7 +744,7 @@
           inputRow.style.display = "none";
           activeRow.style.display = "flex";
           activeText.textContent = key.slice(0, 12) + "...";
-          if (planRow) planRow.style.display = "flex";
+          await enablePlanSelector();
           // Notify content script to enable Pro UI immediately
           notifyActiveTab({ _proEnabled: true });
         } else {
