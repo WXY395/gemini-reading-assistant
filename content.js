@@ -6742,6 +6742,11 @@ const GeminiReadingAssistant = (() => {
     initialized = true;
     currentSettings = await loadSettings();
 
+    // Pro license check
+    var license = await GRAStorage.getLicense();
+    var proEnabled = GRAStorage.isPro(license);
+    console.info("[GRA] Pro status:", proEnabled);
+
     // 初次依設定初始化各模組。
     SidebarNavigationModule.init(currentSettings);
     SelectionToolbarModule.init(currentSettings);

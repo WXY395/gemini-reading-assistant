@@ -11,6 +11,7 @@
 (function () {
   const SETTINGS_KEY = "gra_settings";
   const QUOTES_KEY = "gra_quotes";
+  const LICENSE_KEY = "gra_license";
 
   /**
    * V1 預設設定值。
@@ -358,6 +359,30 @@
     return { success: true, importedKeys: keys };
   }
 
+  // ---- License (Pro) --------------------------------------------------------
+
+  async function getLicense() {
+    const stored = await readFromStorage([LICENSE_KEY]);
+    return stored[LICENSE_KEY] || null;
+  }
+
+  async function saveLicense(licenseData) {
+    await writeToStorage({ [LICENSE_KEY]: licenseData });
+  }
+
+  async function clearLicense() {
+    await writeToStorage({ [LICENSE_KEY]: null });
+  }
+
+  function isPro(license) {
+    if (!license || !license.valid) return false;
+    if (license.verifiedAt) {
+      var daysSinceVerify = (Date.now() - license.verifiedAt) / (1000 * 60 * 60 * 24);
+      if (daysSinceVerify > 30) return false;
+    }
+    return true;
+  }
+
   // 將工具暴露到全域命名空間，以便在 content script / popup 中共用。
   // 若 window 不存在（例如 background service worker），則僅輸出為自執行函式內部工具。
   if (typeof window !== "undefined") {
@@ -381,7 +406,13 @@
       saveConversationSnapshot,
       listAllPluginStorageKeys,
       exportAllPluginData,
-      importAllPluginData
+      importAllPluginData,
+      readFromStorage,
+      writeToStorage,
+      getLicense,
+      saveLicense,
+      clearLicense,
+      isPro
     };
   }
 })();
