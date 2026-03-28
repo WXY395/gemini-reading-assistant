@@ -3493,25 +3493,60 @@ const SidebarNavigationModule = (() => {
         rowEl.appendChild(condenseBtn);
       }
 
-      // ---- Pro: Memory Pin button ----
+      // ---- Pro: Memory Pin button (three-state cycle) ----
+      // Click cycle: unpinned → phase (blue 📌) → core (gold 📌) → remove
       if (_proEnabled) {
         var pinBtn = document.createElement("button");
         pinBtn.type = "button";
         pinBtn.className = "gra-sidebar-nav__pin-btn";
-        pinBtn.textContent = "\uD83D\uDCCC";
-        pinBtn.title = "記住此訊息重點（長按選擇類型）";
+        pinBtn.title = "點擊切換：階段性 → 核心目標 → 取消";
+
+        // Check existing pin state for this message
+        (async function () {
+          var convKey = detectConversationKey();
+          var pins = await GRAStorage.getMemoryPins(convKey);
+          var text = __gra_getSourceText(node);
+          var summary = text.length > 200 ? text.slice(0, 197) + "..." : text;
+          var existing = pins.find(function (p) { return p.text === summary || p.sourceMessageId === id; });
+          if (existing && existing.type === "core") {
+            pinBtn.textContent = "\uD83D\uDCCC";
+            pinBtn.classList.add("gra-sidebar-nav__pin-btn--core");
+          } else if (existing) {
+            pinBtn.textContent = "\uD83D\uDCCC";
+            pinBtn.classList.add("gra-sidebar-nav__pin-btn--phase");
+          } else {
+            pinBtn.textContent = "\uD83D\uDCCC";
+          }
+        })();
+
         pinBtn.addEventListener("click", async function (e) {
           e.stopPropagation();
           var text = __gra_getSourceText(node);
           var summary = text.length > 200 ? text.slice(0, 197) + "..." : text;
           var convKey = detectConversationKey();
-          await GRAStorage.addMemoryPin(convKey, {
-            text: summary,
-            sourceMessageId: id,
-            type: "phase"
-          });
-          pinBtn.textContent = "\u2705";
-          setTimeout(function () { pinBtn.textContent = "\uD83D\uDCCC"; }, 1500);
+          var pins = await GRAStorage.getMemoryPins(convKey);
+          var existing = pins.find(function (p) { return p.text === summary || p.sourceMessageId === id; });
+
+          if (!existing) {
+            // State 1: Not pinned → add as phase
+            await GRAStorage.addMemoryPin(convKey, {
+              text: summary,
+              sourceMessageId: id,
+              type: "phase"
+            });
+            pinBtn.classList.remove("gra-sidebar-nav__pin-btn--core");
+            pinBtn.classList.add("gra-sidebar-nav__pin-btn--phase");
+          } else if (existing.type === "phase") {
+            // State 2: Phase → upgrade to core
+            existing.type = "core";
+            await GRAStorage.saveMemoryPins(convKey, pins);
+            pinBtn.classList.remove("gra-sidebar-nav__pin-btn--phase");
+            pinBtn.classList.add("gra-sidebar-nav__pin-btn--core");
+          } else {
+            // State 3: Core → remove pin
+            await GRAStorage.removeMemoryPin(convKey, existing.id);
+            pinBtn.classList.remove("gra-sidebar-nav__pin-btn--core", "gra-sidebar-nav__pin-btn--phase");
+          }
           updateRecallButton();
         });
         rowEl.appendChild(pinBtn);
