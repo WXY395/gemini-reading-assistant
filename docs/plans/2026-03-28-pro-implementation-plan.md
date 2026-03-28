@@ -908,6 +908,22 @@ git commit -m "release: v3.0.0 — Pro version with license, condense, memory, m
 
 ---
 
+## Optimizations (applied during implementation)
+
+### Opt-1: Condense → 批判性決策基點 (Task 5)
+Prompt 從單純摘要升級為含邏輯漏洞檢查、反面因素、決策基點的批判性分析。
+
+### Opt-2: Memory Pin → 動態權重 (Task 6)
+Pin 新增 `type` 欄位（`"core"` 核心目標 / `"phase"` 階段性結論），喚醒時依權重排序，核心目標優先。
+
+### Opt-3: Handoff → 環境快照 (Task 7)
+Handoff payload 一併傳遞 `geminiPlan` 設定值，確保新分頁 Usage Meter 立即載入正確計量標準。
+
+### Opt-4: DOM 彈性緩衝層 (補充)
+將散落各模組的 CSS Selector 集中到 `GRASelectors` 物件，提高 Gemini DOM 更新時的維護性。此項於 Task 4 開始時實作，後續 Task 5-7 共用。
+
+---
+
 ## Summary
 
 | Task | Feature | Estimated Effort |
