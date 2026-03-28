@@ -6631,6 +6631,11 @@ function exportStoreToJSON() {
 // ---- Search Layer (V3) -----------------------------------------------------
 
 var FEATURES = { SEARCH_ADVANCED: false };
+
+// Updated by init when Pro status is known
+function updateProFeatures(isPro) {
+  FEATURES.SEARCH_ADVANCED = isPro;
+}
 var __gra_search_styles_injected = false;
 
 function injectSearchStyles() {
@@ -6998,6 +7003,7 @@ const GeminiReadingAssistant = (() => {
     var license = await GRAStorage.getLicense();
     var proEnabled = GRAStorage.isPro(license);
     currentSettings._proEnabled = proEnabled;
+    updateProFeatures(proEnabled);
     console.info("[GRA] Pro status:", proEnabled);
 
     // 初次依設定初始化各模組。
