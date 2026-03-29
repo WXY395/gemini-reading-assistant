@@ -58,6 +58,7 @@
 2. `messageStore` grows without eviction in long sessions
 3. Auto-save interval captures stale settings reference
 4. `innerHTML` usage in condense/search (low risk — condense disabled)
+5. **Usage Meter round-count sync** — In rare cases where Gemini's DOM is not detected by Sidebar in time (e.g., deeply nested structures or render delays), the Usage Meter's "round count" may diverge from the Sidebar item count. However, the Meter's character count and percentage are sourced from the underlying `messageStore`, which accurately reflects actual context consumption. Alert thresholds remain reliable.
 
 ---
 
