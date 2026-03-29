@@ -324,8 +324,8 @@ async function snapshotHandoff() {
   if (pins.length > 0) {
     // Opt-2: Sort by weight (core first)
     var sorted = pins.slice().sort(function (a, b) {
-      var w = { core: 0, phase: 1 };
-      return (w[a.type] || 1) - (w[b.type] || 1);
+      var w = { core: 1, phase: 2 };
+      return (w[a.type] || 2) - (w[b.type] || 2);
     });
     summary += "## 重點記憶\n\n";
     sorted.forEach(function (p, i) {
@@ -3365,8 +3365,8 @@ const SidebarNavigationModule = (() => {
 
       // Opt-2: Sort by type weight — core goals first, then phase conclusions
       var sorted = pins.slice().sort(function (a, b) {
-        var w = { core: 0, phase: 1 };
-        return (w[a.type] || 1) - (w[b.type] || 1);
+        var w = { core: 1, phase: 2 };
+        return (w[a.type] || 2) - (w[b.type] || 2);
       });
 
       var segments = sorted.map(function (p, i) {
