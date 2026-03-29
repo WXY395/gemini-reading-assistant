@@ -3294,8 +3294,13 @@ const SidebarNavigationModule = (() => {
     if (!meter) return;
 
     var totalChars = 0;
-    messageStore.forEach(function (msg) { totalChars += (msg.text || "").length; });
-    var totalRounds = Math.ceil(messageStore.size / 2);
+    var totalRounds = 0;
+    var lastRole = null;
+    messageStore.forEach(function (msg) {
+      totalChars += (msg.text || "").length;
+      if (msg.role === "user" && lastRole !== "user") totalRounds++;
+      lastRole = msg.role;
+    });
 
     var PLAN_LIMITS = {
       "flash-32k": 32000,
