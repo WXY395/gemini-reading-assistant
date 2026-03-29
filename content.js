@@ -329,7 +329,7 @@ async function snapshotHandoff() {
     });
     summary += "## 重點記憶\n\n";
     sorted.forEach(function (p, i) {
-      var prefix = p.type === "core" ? "[核心目標] " : "";
+      var prefix = p.type === "core" ? "[CRITICAL PROJECT BASEPOINT] " : "[Phase] ";
       summary += (i + 1) + ". " + prefix + p.text + "\n";
     });
     summary += "\n";
@@ -349,9 +349,9 @@ async function snapshotHandoff() {
   }
 
   var continuationPrompt =
-    "以下是上一輪對話的重點摘要和結論，請閱讀後繼續協助我：\n---\n" +
+    "以下是上一輪對話的核心錨點、階段共識與近期脈絡。標記為 [CRITICAL PROJECT BASEPOINT] 的項目是不可偏離的決策基點：\n---\n" +
     summary +
-    "---\n請確認你已理解以上內容，然後等待我的下一個問題。";
+    "---\n請確認你已校準以上基點，然後等待我的下一個指令。";
 
   // Copy to clipboard as backup
   try {
@@ -3318,8 +3318,8 @@ const SidebarNavigationModule = (() => {
 
     var charsK = Math.round(totalChars / 1000);
     var hint = "";
-    if (usagePercent >= 75) hint = " · 建議匯出並開新對話";
-    else if (usagePercent >= 50) hint = " · 建議準備快照";
+    if (usagePercent >= 75) hint = " · 認知臨界點：建議執行環境快照，避免 AI 邏輯偏差";
+    else if (usagePercent >= 50) hint = " · 認知餘裕收窄：建議準備快照銜接";
 
     label.textContent = totalRounds + " 輪 · 約 " + charsK + "K 字 · " + usagePercent + "%" + hint;
 
@@ -3330,7 +3330,7 @@ const SidebarNavigationModule = (() => {
         handoffBtn = document.createElement("button");
         handoffBtn.type = "button";
         handoffBtn.className = "gra-usage-meter__handoff";
-        handoffBtn.textContent = "一鍵銜接新對話";
+        handoffBtn.textContent = "執行環境快照 · 銜接新對話";
         handoffBtn.addEventListener("click", snapshotHandoff);
         meter.appendChild(handoffBtn);
       }
@@ -3351,7 +3351,7 @@ const SidebarNavigationModule = (() => {
     btn.id = "gra-recall-btn";
     btn.className = "gra-sidebar-nav__recall-btn";
     btn.textContent = "\uD83E\uDDE0 喚醒記憶";
-    btn.title = "將已釘選的重點注入對話，喚醒 AI 記憶";
+    btn.title = "召回核心錨點：優先同步專案基點，校準 AI 認知方向";
     btn.style.display = "none";
     btn.addEventListener("click", async function () {
       var convKey = detectConversationKey();
@@ -3365,13 +3365,13 @@ const SidebarNavigationModule = (() => {
       });
 
       var segments = sorted.map(function (p, i) {
-        var prefix = p.type === "core" ? "[核心目標] " : "";
+        var prefix = p.type === "core" ? "[CRITICAL PROJECT BASEPOINT] " : "[Phase Consensus] ";
         return (i + 1) + ". " + prefix + p.text;
       });
       var prompt =
-        "以下是我們目前討論的重點摘要，請重新聚焦：\n\n" +
+        "以下是本專案的核心錨點與階段共識。標記為 [CRITICAL PROJECT BASEPOINT] 的項目是不可偏離的決策基點，請在後續所有回答中嚴格遵守：\n\n" +
         segments.join("\n\n") +
-        "\n\n請基於以上重點繼續回答。";
+        "\n\n請確認你已校準以上基點，然後基於此框架繼續回答。";
       GeminiInputIntegrationModule.insertTextIntoInput(prompt);
     });
 
@@ -3471,7 +3471,7 @@ const SidebarNavigationModule = (() => {
         condenseBtn.type = "button";
         condenseBtn.className = "gra-sidebar-nav__condense-btn";
         condenseBtn.textContent = "濃";
-        condenseBtn.title = "批判性濃縮：找出邏輯漏洞與決策基點";
+        condenseBtn.title = "批判性濃縮：檢索邏輯漏洞、驅逐認知偏差、鎖定決策基點";
         condenseBtn.addEventListener("click", function (e) {
           e.stopPropagation();
           var text = __gra_getSourceText(node);
@@ -3501,7 +3501,7 @@ const SidebarNavigationModule = (() => {
         var pinBtn = document.createElement("button");
         pinBtn.type = "button";
         pinBtn.className = "gra-sidebar-nav__pin-btn";
-        pinBtn.title = "點擊切換：階段性 → 核心目標 → 取消";
+        pinBtn.title = "點擊校準錨點：階段共識 → 核心基點 → 解除";
 
         // Check existing pin state for this message
         (async function () {
