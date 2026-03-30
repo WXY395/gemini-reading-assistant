@@ -16,14 +16,22 @@ chrome.runtime.onInstalled.addListener((details) => {
   // 目前 V1 不進行任何寫入以保持行為最小化。
 });
 
-// 未來可在此加入與 content script / popup 的簡單訊息橋接：
-// chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-//   switch (message.type) {
-//     case "GRA_SOME_BACKGROUND_TASK":
-//       // TODO: 實作輕量的背景邏輯
-//       break;
-//     default:
-//       break;
-//   }
-// });
+// License verification via Service Worker (avoids popup CORS issues)
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === "GRA_VERIFY_LICENSE") {
+    fetch("https://api.gumroad.com/v2/licenses/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        product_id: message.productId,
+        license_key: message.licenseKey,
+        increment_uses_count: message.incrementUses ? "true" : "false"
+      })
+    })
+      .then((r) => r.json())
+      .then((data) => sendResponse({ ok: true, data }))
+      .catch((e) => sendResponse({ ok: false, error: e.message }));
+    return true; // async sendResponse
+  }
+});
 

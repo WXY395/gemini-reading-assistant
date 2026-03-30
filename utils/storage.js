@@ -387,28 +387,28 @@
   async function verifyLicenseOnline(key, productId, options) {
     var incrementUses = (options && options.incrementUses !== undefined) ? options.incrementUses : true;
     try {
-      var response = await fetch("https://api.gumroad.com/v2/licenses/verify", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          product_id: productId,
-          license_key: key,
-          increment_uses_count: incrementUses ? "true" : "false"
-        })
+      // Route through Service Worker to avoid popup CORS issues
+      var resp = await new Promise(function (resolve) {
+        chrome.runtime.sendMessage({
+          type: "GRA_VERIFY_LICENSE",
+          productId: productId,
+          licenseKey: key,
+          incrementUses: incrementUses
+        }, resolve);
       });
 
-      if (!response.ok) {
-        return { valid: false, error: "network_error" };
+      if (!resp || !resp.ok) {
+        return { valid: false, error: (resp && resp.error) || "network_error" };
       }
 
-      var data = await response.json();
+      var data = resp.data;
 
       if (data.success) {
         var licenseData = {
           code: key,
           valid: true,
           verifiedAt: Date.now(),
-          purchaseEmail: data.purchase?.email || "",
+          purchaseEmail: (data.purchase && data.purchase.email) || "",
           uses: data.uses || 1
         };
         await saveLicense(licenseData);

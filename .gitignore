@@ -11,3 +11,7 @@ backups/
 *.bak
 *.zip
 test-*.js
+
+# Internal docs (not for public repo)
+docs/CWS_SUBMISSION_NOTE.md
+docs/plans/

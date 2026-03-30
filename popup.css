@@ -220,6 +220,19 @@ body {
   align-self: flex-start;
 }
 
+/* ---- Pro License Link ---------------------------------------------------- */
+.gra-popup-link--pro {
+  font-size: 11px;
+  color: #8ab4f8;
+  text-decoration: none;
+  align-self: center;
+  margin-left: 6px;
+}
+.gra-popup-link--pro:hover {
+  text-decoration: underline;
+  color: #aecbfa;
+}
+
 /* ---- Conversation Journal ------------------------------------------------ */
 
 .gra-popup-journal {

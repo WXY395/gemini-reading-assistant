@@ -41,10 +41,9 @@ const DEFAULT_SETTINGS =
  */
 const SUPPORTED_HOSTS = ["gemini.google.com"];
 
-/** 開發驗收用：設為 true 時在 console 輸出 Sidebar block 抓取 debug。 */
+/** Production log gate: set to true for verbose diagnostics. */
+const GRA_DEBUG = false;
 const GRA_DEBUG_SIDEBAR = false;
-
-/** 開發驗收用：Sidebar 點擊跳轉錨點／捲動行為（不改 UI）。 */
 const GRA_DEBUG_SIDEBAR_SCROLL = false;
 
 // ---- 工具函式 --------------------------------------------------------------
@@ -1268,7 +1267,7 @@ const SidebarNavigationModule = (() => {
 
     if (GRA_DEBUG_SIDEBAR_SCROLL) {
       const cn = targetEl.className;
-      console.info("[GRA][sidebar][scroll-debug]", {
+      GRA_DEBUG && console.info("[GRA][sidebar][scroll-debug]", {
         clickedMessageType,
         targetTag: messageNode.tagName,
         anchorTag: targetEl.tagName,
@@ -1360,7 +1359,7 @@ const SidebarNavigationModule = (() => {
 
       container.appendChild(handleEl);
       container.appendChild(bodyEl);
-      console.info("[GRA][sidebar] Sidebar container created.");
+      GRA_DEBUG && console.info("[GRA][sidebar] Sidebar container created.");
     }
 
     if (!listEl) {
@@ -1404,7 +1403,7 @@ const SidebarNavigationModule = (() => {
       }
     });
 
-    console.info("[GRA][sidebar][render]", {
+    GRA_DEBUG && console.info("[GRA][sidebar][render]", {
       activeFilter: currentFilter,
       renderedCount,
       renderedTypes,
@@ -2697,164 +2696,7 @@ const SidebarNavigationModule = (() => {
     return null;
   }
 
-  /**
-   * DevTools 可讀逐筆證據：typeCounts、kept 摘要、pruned user-like、A/B 清單。
-   * 僅診斷輸出，不改 Sidebar 行為。
-   */
-  function logReadableSidebarScanEvidence(info) {
-    const typeCounts = info.typeCounts
-      ? { ...info.typeCounts }
-      : { gemini: 0, user: 0, unknown: 0 };
-    console.info("[GRA][sidebar][evidence] —— 1) typeCounts ——", typeCounts);
-    console.info("[GRA][sidebar][evidence] turn wrappers", {
-      turnWrappersDetected: info.turnWrappersDetected ?? 0,
-      turnWrappersExtracted: info.turnWrappersExtracted ?? 0,
-      atomicUnitsExtractedCount: info.atomicUnitsExtractedCount ?? 0
-    });
-
-    const leak = lastUserPromptLeakDebug;
-    if (leak) {
-      const uq = leak.userQueryCandidates || [];
-      const missingUq = uq.filter((r) => !r.inKept);
-      console.info("[GRA][sidebar][evidence] user prompt leak", {
-        userQueryInDom: uq.length,
-        userQueryNotKept: missingUq.length,
-        userLikeNotKeptRows: (leak.userLikeNotKept || []).length,
-        suppressedChains: (leak.suppressedChains || []).length
-      });
-      if (uq.length > 0) {
-        console.info("[GRA][sidebar][evidence] A) user-query candidates");
-        console.table(
-          uq.map((r) => ({
-            textLen: r.textLen,
-            depth: r.depth,
-            inMerged: r.inMerged,
-            inExpanded: r.inExpanded,
-            inKept: r.inKept,
-            notKeptReason: r.notKeptReason,
-            textPreview: r.textPreview
-          }))
-        );
-      }
-      const ulnk = leak.userLikeNotKept || [];
-      if (ulnk.length > 0) {
-        console.info("[GRA][sidebar][evidence] B) user-like but not kept");
-        console.table(ulnk.slice(0, 25));
-        if (ulnk.length > 25) {
-          console.info(`[GRA][sidebar][evidence] … ${ulnk.length - 25} more userLikeNotKept rows`);
-        }
-      }
-      const sup = leak.suppressedChains || [];
-      if (sup.length > 0) {
-        console.info("[GRA][sidebar][evidence] C) suppressed by ancestor/dedupe");
-        console.table(sup.slice(0, 20));
-        if (sup.length > 20) {
-          console.info(`[GRA][sidebar][evidence] … ${sup.length - 20} more suppressedChains`);
-        }
-      }
-    }
-
-    const preview = Array.isArray(info.keptBlocksPreview) ? info.keptBlocksPreview : [];
-    const previewHead = preview.slice(0, 20);
-    console.info(
-      `[GRA][sidebar][evidence] —— 2) keptBlocksPreview (showing ${previewHead.length} of ${preview.length}, cap 20) ——`
-    );
-    if (previewHead.length > 0) {
-      console.table(
-        previewHead.map((row) => ({
-          index: row.index,
-          tag: row.tag,
-          depth: row.depth,
-          sourceSignal: row.sourceSignal,
-          ancestorSuppressed: row.ancestorSuppressed,
-          textLen: row.textLen,
-          hierarchyLevel: row.hierarchyLevel,
-          isTurnWrapper: row.isTurnWrapper,
-          containsMixed: row.containsMixedUserGeminiText,
-          atomicChildCount: row.atomicChildCount,
-          keptReason: row.keptReason,
-          looksUserLike: row.looksUserLike,
-          messageType: row.messageType ?? row.type,
-          scoreUser: row.scoreUser,
-          scoreGemini: row.scoreGemini,
-          classificationReason: row.selectedReason,
-          textPreview: row.textPreview
-        }))
-      );
-    } else {
-      console.info("[GRA][sidebar][evidence] keptBlocksPreview: [] (empty array)");
-    }
-
-    const pruned = Array.isArray(info.prunedUserLikeCandidates)
-      ? info.prunedUserLikeCandidates
-      : [];
-
-    console.info(
-      `[GRA][sidebar][evidence] —— 3) prunedUserLikeCandidates (first 10 of ${pruned.length}) ——`
-    );
-    if (pruned.length === 0) {
-      console.info("[GRA][sidebar][evidence] prunedUserLikeCandidates: [] (empty array)");
-    } else {
-      console.table(
-        pruned.slice(0, 10).map((r) => ({
-          textPreview: r.textPreview,
-          excludedReason: r.excludedReason,
-          textLen: r.textLen,
-          class: r.class
-        }))
-      );
-      if (pruned.length > 10) {
-        console.info(
-          `[GRA][sidebar][evidence] … ${pruned.length - 10} additional pruned user-like rows (see list B).`
-        );
-      }
-    }
-
-    const prunedTooShortRem = pruned.filter((r) => r.excludedReason === "too-short").length;
-    console.info("[GRA][sidebar][evidence] —— too-short 高可信放寬 / 殘量 ——", {
-      tooShortSkippedForHighTrustUserCount: info.tooShortSkippedForHighTrustUserCount ?? 0,
-      recoveredUserCountFromTooShort: info.recoveredUserCountFromTooShort ?? 0,
-      prunedUserLikeTooShortRemaining: prunedTooShortRem,
-      prunedUserLikeTotal: pruned.length
-    });
-
-    const userLikeKept = preview.filter((r) => r.looksUserLike);
-    console.info(
-      `[GRA][sidebar][evidence] —— A) user-like kept (looksUserLike=true, ${userLikeKept.length}) ——`
-    );
-    if (userLikeKept.length > 0) {
-      console.table(
-        userLikeKept.map((row) => ({
-          index: row.index,
-          textPreview: row.textPreview,
-          messageType: row.messageType ?? row.type,
-          scoreUser: row.scoreUser,
-          scoreGemini: row.scoreGemini,
-          classificationReason: row.selectedReason
-        }))
-      );
-    } else {
-      console.info(
-        "[GRA][sidebar][evidence] A) (none — looksUserLike all false or kept empty)"
-      );
-    }
-
-    console.info(
-      `[GRA][sidebar][evidence] —— B) pruned user-like candidates (all ${pruned.length}) ——`
-    );
-    if (pruned.length > 0) {
-      console.table(
-        pruned.map((r) => ({
-          textPreview: r.textPreview,
-          excludedReason: r.excludedReason,
-          textLen: r.textLen,
-          class: r.class
-        }))
-      );
-    } else {
-      console.info("[GRA][sidebar][evidence] B) [] (empty array)");
-    }
-  }
+  // logReadableSidebarScanEvidence removed for production
 
   /**
    * Debug 輸出：儲存 lastSidebarDebugInfo、寫入 DOM 供 page context 讀取、自動 console 輸出。
@@ -2938,12 +2780,10 @@ const SidebarNavigationModule = (() => {
         : null
     };
 
-    try {
-      document.documentElement.dataset.graSidebarDebug = JSON.stringify(lastSidebarDebugInfo);
-    } catch (_) {}
+    // Debug data no longer written to DOM in production
 
     if (info.pruneCount === 0) {
-      console.info("[GRA][sidebar][debug] zero blocks", {
+      GRA_DEBUG && console.info("[GRA][sidebar][debug] zero blocks", {
         pageType,
         firstMessageFound: lastFirstMessageInfo.found,
         firstMessageTag: lastFirstMessageInfo.tag,
@@ -2977,7 +2817,7 @@ const SidebarNavigationModule = (() => {
         prunedUserLikeTooShortRemaining
       });
     } else {
-      console.info("[GRA][sidebar][debug] blocks found", {
+      GRA_DEBUG && console.info("[GRA][sidebar][debug] blocks found", {
         count: info.pruneCount,
         typeCounts: info.typeCounts,
         allCount: lastSidebarDebugInfo.allCount,
@@ -2995,7 +2835,7 @@ const SidebarNavigationModule = (() => {
       });
     }
 
-    logReadableSidebarScanEvidence(info);
+    // Evidence logging removed for production
   }
 
   /**
@@ -3230,12 +3070,7 @@ const SidebarNavigationModule = (() => {
       }
     }
 
-    console.log("[GRA] Condense V7.5 RUNNING", {
-      text: text.slice(0, 100),
-      irType: ir ? ir.type : "unknown/null",
-      summary,
-      method
-    });
+    // Condense V7.5 debug log removed for production
 
     const condenseRoot = document.createElement("div");
     condenseRoot.setAttribute("data-gra-condense-root", "true");
@@ -3409,7 +3244,7 @@ const SidebarNavigationModule = (() => {
         container.style.display = "none";
       }
       items = [];
-      console.info("[GRA][sidebar] Sidebar hidden because no message elements were found.");
+      GRA_DEBUG && console.info("[GRA][sidebar] Sidebar hidden because no message elements were found.");
       return;
     }
 
@@ -3572,11 +3407,13 @@ const SidebarNavigationModule = (() => {
 
     const counts = { gemini: 0, user: 0, unknown: 0 };
     for (const it of items) counts[it.messageType] = (counts[it.messageType] || 0) + 1;
-    console.info("[GRA][sidebar] message type counts:", counts);
+    GRA_DEBUG && console.info("[GRA][sidebar] message type counts:", counts);
 
     applyFilter();
     updateActiveItem();
+    ensureUsageMeter();
     updateUsageMeter();
+    ensureRecallButton();
     updateRecallButton();
   }
 
@@ -4017,7 +3854,7 @@ const SidebarNavigationModule = (() => {
     init(settings) {
       _moduleSettings = settings || _moduleSettings;
       if (settings && settings._proEnabled !== undefined) _proEnabled = !!settings._proEnabled;
-      console.info("[GRA][sidebar] init called", {
+      GRA_DEBUG && console.info("[GRA][sidebar] init called", {
         extensionEnabled: settings ? settings.extensionEnabled : undefined,
         showNavigator: settings ? settings.showNavigator : undefined,
         supported: isSupportedGeminiPage(),
@@ -4048,7 +3885,7 @@ const SidebarNavigationModule = (() => {
      * 銷毀側邊導覽模組，移除 DOM、事件與監聽器。
      */
     destroy() {
-      console.info("[GRA][sidebar] Sidebar destroyed.");
+      GRA_DEBUG && console.info("[GRA][sidebar] Sidebar destroyed.");
       GraReadingPhase1Ux.clearFocusForRebuild();
       stopObserver();
       items = [];
@@ -4127,15 +3964,6 @@ const SidebarNavigationModule = (() => {
     },
 
     /**
-     * 開發驗收：執行掃描管線並回傳 debug 資訊。
-     * 可在 console 呼叫 window.__GRA_DEBUG_SIDEBAR__() 取得。
-     */
-    runDebugPipeline() {
-      findMessageElements();
-      return lastSidebarDebugInfo;
-    },
-
-    /**
      * 開發用：探查 turn wrapper 內層 DOM（不修改 Sidebar / prune / 分類）。
      */
     inspectTurnStructure(options) {
@@ -4144,89 +3972,7 @@ const SidebarNavigationModule = (() => {
   };
 })();
 
-/**
- * 注入 script 到 page context，讓 DevTools Console（預設 page context）可呼叫
- * window.__GRA_DEBUG_SIDEBAR__() 讀取 content script 寫入的 debug 資訊。
- * Content script 與 page 有各自 window，需透過 DOM（dataset）傳遞。
- */
-function injectSidebarDebugBridge() {
-  try {
-    const script = document.createElement("script");
-    script.textContent = `
-      (function() {
-        window.__GRA_DEBUG_SIDEBAR__ = function() {
-          try {
-            var raw = document.documentElement.dataset.graSidebarDebug;
-            return raw ? JSON.parse(raw) : null;
-          } catch (e) { return null; }
-        };
-      })();
-    `;
-    (document.head || document.documentElement).appendChild(script);
-    script.remove();
-  } catch (_) {}
-}
-
-/**
- * Page world：以 <script src="chrome-extension://.../gra-inspect-bridge-page.js"> 注入，
- * 避開 gemini.google.com 對 inline script 的 CSP 限制。
- */
-function injectTurnInspectBridge() {
-  try {
-    if (typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.getURL) {
-      return;
-    }
-    const url = chrome.runtime.getURL("gra-inspect-bridge-page.js");
-    const script = document.createElement("script");
-    script.src = url;
-    script.async = false;
-    script.onload = function () {
-      try {
-        script.remove();
-      } catch (_) {}
-    };
-    script.onerror = function () {
-      console.warn(
-        "[GRA] gra-inspect-bridge-page.js failed to load; check web_accessible_resources / extension reload."
-      );
-    };
-    (document.head || document.documentElement).appendChild(script);
-  } catch (err) {
-    console.warn("[GRA] injectTurnInspectBridge", err);
-  }
-}
-
-document.addEventListener(
-  "__gra_turn_inspect_run__",
-  (ev) => {
-    const id = ev && ev.detail && ev.detail.id;
-    try {
-      const payload = SidebarNavigationModule.inspectTurnStructure(ev.detail?.opts || {});
-      document.dispatchEvent(
-        new CustomEvent("__gra_turn_inspect_done__", { detail: { id, payload } })
-      );
-    } catch (err) {
-      document.dispatchEvent(
-        new CustomEvent("__gra_turn_inspect_done__", {
-          detail: {
-            id,
-            payload: {
-              ok: false,
-              error: err && err.message ? String(err.message) : "inspect-failed",
-              generatedAt: new Date().toISOString()
-            }
-          }
-        })
-      );
-    }
-  },
-  false
-);
-
-if (typeof document !== "undefined" && document.documentElement) {
-  injectSidebarDebugBridge();
-  injectTurnInspectBridge();
-}
+// Debug bridge functions removed for production
 
 /**
  * 選字後浮動工具列模組。
@@ -4462,7 +4208,7 @@ const SelectionToolbarModule = (() => {
     try {
       if (navigator.clipboard && navigator.clipboard.writeText) {
         await navigator.clipboard.writeText(currentSelectionText);
-        console.info("[GRA][selection-toolbar] Copied to clipboard.");
+        GRA_DEBUG && console.info("[GRA][selection-toolbar] Copied to clipboard.");
       } else {
         // 後備機制：透過選取與 execCommand('copy') 嘗試複製。
         const textarea = document.createElement("textarea");
@@ -4473,7 +4219,7 @@ const SelectionToolbarModule = (() => {
         textarea.select();
         document.execCommand("copy");
         document.body.removeChild(textarea);
-        console.info("[GRA][selection-toolbar] Copied to clipboard (fallback).");
+        GRA_DEBUG && console.info("[GRA][selection-toolbar] Copied to clipboard (fallback).");
       }
     } catch (error) {
       console.warn("[GRA][selection-toolbar] Failed to copy text:", error);
@@ -4557,8 +4303,10 @@ const SelectionToolbarModule = (() => {
         sourceSelectorHint: source?.sourceSelectorHint
       });
     } else {
-      // 普通點擊：插入 Gemini 對話框
-      GeminiInputIntegrationModule.insertTextIntoInput(currentSelectionText);
+      // 普通點擊：以引用模板插入 Gemini 對話框
+      const template =
+        GeminiInputIntegrationModule.buildQuoteTemplate(currentSelectionText);
+      GeminiInputIntegrationModule.insertTextIntoInput(template);
     }
     hideToolbar();
   }
@@ -5023,7 +4771,7 @@ const CitationClipboardModule = (() => {
 
     const isDuplicate = quotes.some((q) => q.text === text);
     if (isDuplicate) {
-      console.info("[GRA][citation] Duplicate quote skipped:", text);
+      GRA_DEBUG && console.info("[GRA][citation] Duplicate quote skipped:", text);
       return;
     }
 
@@ -7053,7 +6801,7 @@ const GeminiReadingAssistant = (() => {
   async function init() {
     if (initialized) return;
     if (!isSupportedGeminiPage()) {
-      console.info("[GRA] Not a supported Gemini page. Content script will stay idle.");
+      GRA_DEBUG && console.info("[GRA] Not a supported Gemini page. Content script will stay idle.");
       return;
     }
 
@@ -7065,13 +6813,13 @@ const GeminiReadingAssistant = (() => {
     var proEnabled = GRAStorage.isPro(license);
     currentSettings._proEnabled = proEnabled;
     updateProFeatures(proEnabled);
-    console.info("[GRA] Pro status:", proEnabled);
+    GRA_DEBUG && console.info("[GRA] Pro status:", proEnabled);
 
     // Silent re-verify if license is in grace period (>30 days since last verify)
     if (proEnabled && license && license.verifiedAt) {
       var daysSince = (Date.now() - license.verifiedAt) / (1000 * 60 * 60 * 24);
       if (daysSince > 30) {
-        GRAStorage.silentReVerify(license, "YOUR_PRODUCT_ID").catch(function () {});
+        GRAStorage.silentReVerify(license, "AR4HmEQdU1OmdDAm2V3ayA==").catch(function () {});
       }
     }
 
@@ -7252,7 +7000,7 @@ const GeminiReadingAssistant = (() => {
       }
     })();
 
-    console.info("[GRA] Gemini Reading Assistant content script initialized.");
+    GRA_DEBUG && console.info("[GRA] Gemini Reading Assistant content script initialized.");
   }
 
   return {

@@ -684,7 +684,7 @@
 
   // ---- License UI (Pro) -----------------------------------------------------
 
-  var GUMROAD_PRODUCT_ID = "YOUR_PRODUCT_ID"; // TODO: replace after Gumroad setup
+  var GUMROAD_PRODUCT_ID = "AR4HmEQdU1OmdDAm2V3ayA==";
 
   async function initLicenseUI() {
     var statusEl = document.getElementById("gra-license-status");

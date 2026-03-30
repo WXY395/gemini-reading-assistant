@@ -1,26 +1,8 @@
-# Gemini Reading Assistant (Beta)
+# Gemini Reading Assistant
 
 > The missing reading layer for Gemini.
 
 A Chrome Extension that transforms long Gemini conversations into a structured, searchable, and reusable knowledge experience.
-
----
-
-## ⚠️ Beta Disclaimer
-
-This extension is currently in **beta**.
-
-* Features may change without notice
-* Some behaviors are still being refined
-* Gemini UI updates may temporarily break functionality
-
-### Stability Expectations
-
-* Core features are usable
-* Edge cases may still exist
-* Debug utilities are currently more permissive than production-level tools
-
-Feedback and issue reports are highly appreciated.
 
 ---
 
@@ -37,7 +19,7 @@ This extension solves that by adding a **reading layer** on top of Gemini.
 
 ---
 
-## 🚀 Core Features
+## 🚀 Core Features (Free)
 
 ### 🧭 Sidebar Navigation
 
@@ -60,14 +42,12 @@ This extension solves that by adding a **reading layer** on top of Gemini.
 
 * Save useful outputs as reusable knowledge cards
 * Insert back into Gemini input (auto-removed after insertion)
-* Collapses to a minimal label when empty
 * Lightweight knowledge capture
 
 ### 🔎 Store Search (Ctrl+Shift+S)
 
 * Search conversation content from messageStore
 * Keyword highlighting + click to jump
-* Also accessible via 🔍 button in sidebar
 
 ### 💾 Conversation Persistence
 
@@ -75,11 +55,34 @@ This extension solves that by adding a **reading layer** on top of Gemini.
 * Snapshot + journal system
 * Export: Markdown / TXT / JSON
 
-> ⚠️ **Note:** The message condense feature is currently **disabled by default** due to extraction instability. It can be manually enabled in the popup settings.
+---
+
+## ⚡ Pro Features
+
+Unlock cognitive defense tools for power users. [Purchase on Gumroad](https://gumroad.com/l/hsiowq)
+
+| Feature | Free | Pro |
+|---------|------|-----|
+| Sidebar navigation | ✅ | ✅ |
+| Selection toolbar | ✅ | ✅ |
+| Citation clipboard | ✅ | ✅ |
+| Store search | 20 results | **Unlimited** |
+| Critical Condense | — | ✅ |
+| Weighted Memory (Pin & Recall) | — | ✅ |
+| Context Usage Meter | — | ✅ |
+| Snapshot Handoff | — | ✅ |
+| Gemini Plan Selector | — | ✅ |
+| Custom Condense Prompt | — | ✅ |
 
 ---
 
-## 📦 Installation (Manual)
+## 📦 Installation
+
+### Chrome Web Store
+
+[Install from Chrome Web Store](https://chromewebstore.google.com/detail/gemini-reading-assistant/pkjhdddhfmiobolikabciojnkigjopkg)
+
+### Manual (Developer)
 
 1. Clone the repository:
 
@@ -87,28 +90,17 @@ This extension solves that by adding a **reading layer** on top of Gemini.
 git clone https://github.com/WXY395/gemini-reading-assistant.git
 ```
 
-2. Open Chrome:
-
-```
-chrome://extensions/
-```
-
-3. Enable:
-
-* Developer Mode (top right)
-
-4. Click:
-
-* "Load unpacked"
-
-5. Select this project folder
+2. Open `chrome://extensions/`
+3. Enable **Developer Mode** (top right)
+4. Click **Load unpacked** → select this project folder
 
 ---
 
 ## 🔐 Permissions
 
-* `storage` → save settings & data
+* `storage` → save settings & data locally
 * `https://gemini.google.com/*` → interact with Gemini
+* `https://api.gumroad.com/*` → license key verification (Pro)
 
 No external data collection.
 
@@ -117,84 +109,9 @@ No external data collection.
 ## 🔒 Privacy
 
 1. All data is stored locally in your browser
-2. No external servers are used
-3. No tracking or analytics are implemented
-4. This extension does **not** send any conversation data outside of your local environment
-
----
-
-### Local Debug Behavior
-
-During development or debugging, some internal state may be:
-
-* Logged to the browser console
-* Temporarily stored in DOM attributes (e.g. `data-*`)
-* Exposed via debug utilities in the page context
-
-These mechanisms are used **only for local debugging** and are not transmitted externally.
-
-> ⚠️ Avoid sharing console logs or debug outputs if they may contain sensitive conversation content.
-
----
-
-## 🧪 Debug & Inspect Utilities
-
-This project includes internal debugging and inspection tools, such as:
-
-* Sidebar scan diagnostics
-* DOM structure inspection
-* Page-context bridge utilities
-
-These tools may expose partial conversation structure or text previews **within the local page context**.
-
-### Important Notes
-
-* These utilities do **not** send data externally
-* They operate entirely within the local browser environment
-* They may be refined or restricted in future production versions
-
-If you are using this extension in a sensitive environment, you may choose to disable or remove these debug features.
-
----
-
-## 🧠 What makes this different
-
-This is not just a UI enhancement.
-
-It introduces a **structured reading system for LLM conversations**:
-
-* Message-level awareness
-* DOM-aware navigation
-* Persistent knowledge layer
-
----
-
-## 🧭 Roadmap
-
-### Phase 1.5
-
-* Search + collapse coordination
-* Focus mode refinement
-* UX stabilization
-
-### Phase 2
-
-* Cross-conversation search
-* Knowledge cards upgrade
-* Conversation map
-
-### Future
-
-* Personal AI memory layer
-* Local RAG integration
-
----
-
-## 🤝 Contributing
-
-Issues and feedback are welcome.
-
-If Gemini UI updates break something, feel free to open an issue.
+2. No external servers are used (except Gumroad license verification)
+3. No tracking or analytics
+4. Conversation data never leaves your local environment
 
 ---
 
@@ -213,3 +130,36 @@ This project is not affiliated with Google or Gemini.
 ## ⭐ If this helps you
 
 Give it a star — it helps a lot.
+
+---
+
+## 🇹🇼 中文簡介
+
+Gemini Reading Assistant 是一款 Chrome 擴充功能，為 Google Gemini 對話加上結構化的閱讀層。
+
+### 解決的問題
+
+Gemini 的長對話容易失控——難以導航、難以搜尋、容易遺失重要結論。本擴充功能在 Gemini 頁面上疊加側邊欄導航、頁內搜尋、選字工具列、引用暫存夾等功能，讓你的對話不再是一條無盡的訊息流。
+
+### 免費功能
+
+- **側邊欄導航** — 快速跳轉訊息，支援 全部 / Gemini / 使用者 篩選
+- **頁內搜尋** — 增強版 Ctrl+F，只搜尋對話內容
+- **選字工具列** — 選取文字後出現「引用」+「複製」按鈕
+- **引用暫存夾** — 儲存重要段落，一鍵插入 Gemini 輸入框
+- **對話搜尋** — Ctrl+Shift+S 搜尋完整對話內容
+- **對話匯出** — Markdown / TXT / JSON 格式匯出
+
+### Pro 進階功能
+
+透過 [Gumroad 購買授權](https://gumroad.com/l/hsiowq) 解鎖：
+
+- **批判性濃縮** — 一鍵讓 AI 檢索邏輯漏洞、反面因素與決策基點
+- **記憶錨點（Pin & Recall）** — 雙階釘選（藍色階段共識 / 金色核心目標），一鍵召回所有錨點
+- **Context 用量追蹤** — 即時監控對話輪數、字數與 Context 消耗百分比
+- **環境快照銜接** — 對話空間不足時，一鍵將完整環境轉移到新分頁
+- **自訂濃縮提示詞** — 根據專業領域自訂批判性分析角度
+
+### 隱私保護
+
+所有資料儲存在本地瀏覽器，不會傳送至外部伺服器（Pro 授權驗證除外）。無追蹤、無分析。
