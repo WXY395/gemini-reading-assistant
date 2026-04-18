@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Support &amp; FAQ — Gemini Reading Assistant</title>
+<meta name="description" content="Frequently asked questions and support for the Gemini Reading Assistant Chrome extension.">
+<style>
+  :root {
+    --bg: #0f1419;
+    --panel: #1a1a1a;
+    --panel-2: #20262d;
+    --border: #2a2f36;
+    --text: #e6e8eb;
+    --muted: #9ca3af;
+    --accent: #f97316;
+    --link: #fbbf24;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans TC", sans-serif;
+    line-height: 1.65;
+  }
+  .wrap { max-width: 820px; margin: 0 auto; padding: 40px 24px 80px; }
+  header {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 20px;
+    margin-bottom: 32px;
+  }
+  header .eyebrow {
+    color: var(--accent);
+    font-size: 13px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+  header h1 { margin: 6px 0 4px; font-size: 28px; font-weight: 700; }
+  header .meta { color: var(--muted); font-size: 13px; }
+  nav.top {
+    margin-top: 16px;
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+    font-size: 14px;
+  }
+  nav.top a { color: var(--link); text-decoration: none; }
+  nav.top a:hover { color: var(--accent); text-decoration: underline; }
+
+  h2 {
+    color: #fff;
+    font-size: 20px;
+    margin-top: 36px;
+    margin-bottom: 10px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+  h2:first-of-type { border-top: none; padding-top: 0; }
+
+  details {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin: 10px 0;
+    padding: 0;
+  }
+  details[open] { border-color: rgba(249,115,22,0.4); }
+  summary {
+    cursor: pointer;
+    padding: 14px 18px;
+    font-weight: 600;
+    color: #fff;
+    list-style: none;
+    position: relative;
+  }
+  summary::-webkit-details-marker { display: none; }
+  summary::after {
+    content: "+";
+    position: absolute;
+    right: 18px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--accent);
+    font-size: 20px;
+    font-weight: 400;
+  }
+  details[open] summary::after { content: "–"; }
+  details .body {
+    padding: 0 18px 16px;
+    color: var(--text);
+    font-size: 15px;
+  }
+  details .body p { margin: 6px 0; }
+  details .body code {
+    background: var(--panel-2);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 13.5px;
+    color: #fde68a;
+  }
+  details .body ul { padding-left: 22px; }
+
+  .kbd {
+    display: inline-block;
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 1px 7px;
+    font-size: 12.5px;
+    color: var(--text);
+    margin: 0 2px;
+  }
+  a { color: var(--link); }
+  a:hover { color: var(--accent); }
+
+  .contact-box {
+    background: linear-gradient(180deg, rgba(249,115,22,0.08), transparent);
+    border: 1px solid rgba(249,115,22,0.3);
+    border-radius: 12px;
+    padding: 20px;
+    margin-top: 32px;
+  }
+  .contact-box h3 { margin: 0 0 6px; color: var(--accent); }
+
+  footer {
+    margin-top: 60px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 13.5px;
+  }
+
+  @media (max-width: 600px) {
+    .wrap { padding: 24px 16px 60px; }
+    header h1 { font-size: 22px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Gemini Reading Assistant</div>
+    <h1>Support &amp; FAQ</h1>
+    <div class="meta">Last updated: 2026-04-18 · Version 3.0.3</div>
+    <nav class="top">
+      <a href="./index.html">← Home</a>
+      <a href="./privacy.html">Privacy</a>
+      <a href="./terms.html">Terms</a>
+      <a href="https://github.com/WXY395/gemini-reading-assistant">GitHub</a>
+    </nav>
+  </header>
+
+  <h2>Getting started</h2>
+
+  <details open>
+    <summary>How do I install the extension?</summary>
+    <div class="body">
+      <p>Install from the
+        <a href="https://chromewebstore.google.com/detail/gemini-reading-assistant/pkjhdddhfmiobolikabciojnkigjopkg">Chrome Web Store</a>.
+        After installing, open <a href="https://gemini.google.com">gemini.google.com</a> and refresh the page. The sidebar appears on the right once a conversation is loaded.</p>
+    </div>
+  </details>
+
+  <details>
+    <summary>I installed it but nothing shows up. What's wrong?</summary>
+    <div class="body">
+      <ul>
+        <li>Make sure you are on <code>gemini.google.com</code> (not bard.google.com or another URL).</li>
+        <li>Refresh the page after installing or after updating the extension.</li>
+        <li>Click the extension icon and confirm the master toggle ("Enable on this tab") is ON.</li>
+        <li>If the page loaded before the extension was ready, close and reopen the tab.</li>
+      </ul>
+    </div>
+  </details>
+
+  <details>
+    <summary>Which browsers are supported?</summary>
+    <div class="body">
+      <p>Any Chromium-based browser that supports Manifest V3: <strong>Chrome</strong>, <strong>Edge</strong>, <strong>Brave</strong>, <strong>Arc</strong>, <strong>Vivaldi</strong>, <strong>Opera</strong>. The extension is distributed via the Chrome Web Store; on other Chromium browsers you may need to install in developer mode.</p>
+    </div>
+  </details>
+
+  <h2>Using the extension</h2>
+
+  <details>
+    <summary>What are the keyboard shortcuts?</summary>
+    <div class="body">
+      <ul>
+        <li><span class="kbd">Ctrl</span><span class="kbd">F</span> — in-page keyword search (enhanced Ctrl+F)</li>
+        <li><span class="kbd">Ctrl</span><span class="kbd">Shift</span><span class="kbd">S</span> — open / close full-text conversation search</li>
+        <li><span class="kbd">Ctrl</span><span class="kbd">Shift</span><span class="kbd">X</span> — open screenshot mode menu (NEW in v3.0.3)</li>
+        <li><span class="kbd">Esc</span> — close any open overlay (search, screenshot, etc.)</li>
+      </ul>
+    </div>
+  </details>
+
+  <details>
+    <summary>Why can't I type Chinese / Zhuyin into the search panel?</summary>
+    <div class="body">
+      <p>This was fixed in <strong>v3.0.3</strong>. Please update the extension via Chrome Web Store. If you are on v3.0.3 and still see the issue, please open an issue on GitHub with your Chrome version, IME, and OS.</p>
+    </div>
+  </details>
+
+  <details>
+    <summary>My exported TXT file shows garbled characters on Windows Notepad.</summary>
+    <div class="body">
+      <p>This was fixed in <strong>v3.0.3</strong> by prepending a UTF-8 BOM to exported files and normalising Unicode math-bold characters back to ASCII. Please update to v3.0.3. Markdown exports keep emoji intact by design.</p>
+    </div>
+  </details>
+
+  <details>
+    <summary>How do screenshots work? Are my images uploaded anywhere?</summary>
+    <div class="body">
+      <p><strong>No uploads, ever.</strong> The screenshot feature uses Chrome's built-in <code>chrome.tabs.captureVisibleTab</code> API. Captured images are processed entirely in your browser and downloaded as PNG files to your Downloads folder. See the <a href="./privacy.html">Privacy Policy</a> for details.</p>
+      <p>Three modes available via <span class="kbd">Ctrl</span><span class="kbd">Shift</span><span class="kbd">X</span>:</p>
+      <ul>
+        <li><strong>Region</strong> — drag a rectangle to select</li>
+        <li><strong>Element</strong> — hover to highlight a block, click to capture</li>
+        <li><strong>Long scroll</strong> — auto-scrolls the conversation and stitches segments into one tall PNG</li>
+      </ul>
+    </div>
+  </details>
+
+  <details>
+    <summary>Long screenshot stops at some point. Why?</summary>
+    <div class="body">
+      <p>Chrome has a hard Canvas size limit around 32,000 pixels. When your conversation exceeds that, the Extension caps the output height at 32,000 px and shows a toast notice. For extremely long conversations, use the conversation export (MD/TXT/JSON) instead, or capture in chunks.</p>
+    </div>
+  </details>
+
+  <details>
+    <summary>Can I export my data?</summary>
+    <div class="body">
+      <p>Yes. Open the popup and click:</p>
+      <ul>
+        <li><strong>Export MD / TXT</strong> — conversation snapshot in human-readable form</li>
+        <li><strong>Export JSON</strong> — full backup of all extension data (settings, cards, journals, license metadata)</li>
+      </ul>
+      <p>The JSON export can be re-imported on another device via the <strong>Import JSON</strong> button.</p>
+    </div>
+  </details>
+
+  <h2>Pro version</h2>
+
+  <details>
+    <summary>How do I purchase Pro?</summary>
+    <div class="body">
+      <p>Pro licenses are sold via Gumroad: <a href="https://gumroad.com/l/hsiowq">gumroad.com/l/hsiowq</a>. After purchase you receive a license key beginning with <code>GRA-PRO-</code>. Paste it into the popup's license field and click "Activate".</p>
+    </div>
+  </details>
+
+  <details>
+    <summary>What do I get with Pro?</summary>
+    <div class="body">
+      <ul>
+        <li>Critical Condense — let the AI surface logical gaps</li>
+        <li>Weighted Memory Pins (phase / core tiers)</li>
+        <li>Recall — one-click re-inject all pinned anchors</li>
+        <li>Context Usage Meter</li>
+        <li>Snapshot Handoff — carry context into a fresh conversation</li>
+        <li>Gemini plan selector (Flash 32k / Pro 128k / Ultra 1M)</li>
+        <li>Custom condense prompt</li>
+        <li>Unlimited store search (Free: 20 results)</li>
+      </ul>
+    </div>
+  </details>
+
+  <details>
+    <summary>I lost my license key.</summary>
+    <div class="body">
+      <p>Log in to Gumroad with the email you used to purchase; your license is shown in the order details. If you need help, contact Gumroad support or open an issue on GitHub.</p>
+    </div>
+  </details>
+
+  <details>
+    <summary>Can I use Pro on multiple devices?</summary>
+    <div class="body">
+      <p>Yes. The same license key can be activated on all your personal devices. The verification just confirms the key is valid; there is no hard device cap enforced by the Extension.</p>
+    </div>
+  </details>
+
+  <details>
+    <summary>How do I cancel / refund?</summary>
+    <div class="body">
+      <p>Gumroad's standard refund policy applies (30 days from purchase, case-by-case). See <a href="./terms.html">Terms of Use</a> for details.</p>
+    </div>
+  </details>
+
+  <h2>Troubleshooting</h2>
+
+  <details>
+    <summary>The sidebar doesn't update when Gemini streams a long answer.</summary>
+    <div class="body">
+      <p>This can happen if Gemini's DOM structure changes. Try: (1) refresh the Gemini tab, (2) click the extension's "Refresh Diagnostics" button in the popup, (3) if the issue persists, report it on GitHub with your Chrome and Gemini page URL.</p>
+    </div>
+  </details>
+
+  <details>
+    <summary>Search finds nothing even though the text is clearly in the conversation.</summary>
+    <div class="body">
+      <p>The search uses the internal message store, which is built as messages load. For very old messages that loaded before the extension was active, click <strong>Full Backfill</strong> in the popup to force a full re-scan, then search again.</p>
+    </div>
+  </details>
+
+  <details>
+    <summary>The Pro license stops working after 30 days.</summary>
+    <div class="body">
+      <p>The Extension re-verifies Pro licenses in the background every 30 days (with a 7-day grace period). If re-verification fails because you are offline, try again when online. If the license was revoked upstream (unlikely), contact support.</p>
+    </div>
+  </details>
+
+  <div class="contact-box">
+    <h3>Still need help?</h3>
+    <p>The best place to report issues, ask questions, or suggest features is GitHub Issues — this gives us a public, traceable record and lets other users benefit from the answer.</p>
+    <p>
+      <a href="https://github.com/WXY395/gemini-reading-assistant/issues/new"
+         style="display:inline-block; background:var(--accent); color:#fff; padding:10px 20px; border-radius:8px; text-decoration:none; font-weight:600; margin-top:8px;">
+        Open a GitHub Issue →
+      </a>
+    </p>
+  </div>
+
+  <footer>
+    © 2026 WXY395 · <a href="https://github.com/WXY395/gemini-reading-assistant">Source on GitHub</a> · MIT License
+  </footer>
+</div>
+</body>
+</html>

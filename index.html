@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Gemini Reading Assistant — A reading layer for Gemini</title>
+<meta name="description" content="Chrome extension that adds navigation, search, citation, export, and screenshot tools to your Google Gemini conversations.">
+<meta property="og:title" content="Gemini Reading Assistant">
+<meta property="og:description" content="A reading layer for Google Gemini — sidebar navigation, full-text search, screenshot tools, and more.">
+<meta property="og:type" content="website">
+<style>
+  :root {
+    --bg: #0f1419;
+    --panel: #1a1a1a;
+    --panel-2: #20262d;
+    --border: #2a2f36;
+    --text: #e6e8eb;
+    --muted: #9ca3af;
+    --accent: #f97316;
+    --accent-2: #fb923c;
+    --link: #fbbf24;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: radial-gradient(1200px 600px at 50% -200px, rgba(249,115,22,0.15), transparent 60%), var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans TC", sans-serif;
+    line-height: 1.6;
+  }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 48px 24px 80px; }
+  header.hero {
+    text-align: center;
+    padding: 40px 0 24px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 48px;
+  }
+  .badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 999px;
+    background: rgba(249,115,22,0.12);
+    color: var(--accent);
+    font-size: 12.5px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-weight: 600;
+    border: 1px solid rgba(249,115,22,0.3);
+  }
+  h1 {
+    font-size: 44px;
+    font-weight: 800;
+    margin: 18px 0 8px;
+    letter-spacing: -0.02em;
+  }
+  h1 .accent { color: var(--accent); }
+  .tagline {
+    font-size: 18px;
+    color: var(--muted);
+    max-width: 600px;
+    margin: 0 auto 28px;
+  }
+  .cta-row {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin-top: 20px;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 22px;
+    border-radius: 10px;
+    text-decoration: none;
+    font-size: 15px;
+    font-weight: 600;
+    transition: transform 0.1s, background 0.15s;
+    border: 1px solid transparent;
+  }
+  .btn-primary {
+    background: var(--accent);
+    color: #fff;
+  }
+  .btn-primary:hover {
+    background: var(--accent-2);
+    transform: translateY(-1px);
+  }
+  .btn-secondary {
+    background: var(--panel);
+    color: var(--text);
+    border-color: var(--border);
+  }
+  .btn-secondary:hover {
+    background: var(--panel-2);
+    transform: translateY(-1px);
+  }
+
+  h2 {
+    font-size: 26px;
+    margin: 56px 0 20px;
+    letter-spacing: -0.01em;
+  }
+  .features {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 16px;
+  }
+  .feature {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+  }
+  .feature .ico {
+    font-size: 24px;
+    margin-bottom: 10px;
+  }
+  .feature h3 {
+    margin: 4px 0 6px;
+    font-size: 17px;
+    color: #fff;
+  }
+  .feature p { margin: 0; color: var(--muted); font-size: 14.5px; }
+  .feature.new {
+    border-color: rgba(249,115,22,0.5);
+    background: linear-gradient(180deg, rgba(249,115,22,0.08) 0%, var(--panel) 40%);
+  }
+  .feature .new-badge {
+    display: inline-block;
+    background: var(--accent);
+    color: #fff;
+    font-size: 10.5px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 999px;
+    letter-spacing: 0.06em;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+
+  .pro-section {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 32px;
+    margin-top: 40px;
+  }
+  .pro-section h2 { margin-top: 0; }
+  .pro-list { columns: 2; column-gap: 24px; padding-left: 20px; }
+  .pro-list li { margin: 6px 0; }
+  @media (max-width: 600px) { .pro-list { columns: 1; } }
+
+  .links-row {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin-top: 24px;
+    font-size: 14.5px;
+  }
+  .links-row a {
+    color: var(--link);
+    text-decoration: none;
+  }
+  .links-row a:hover { color: var(--accent); text-decoration: underline; }
+
+  footer {
+    margin-top: 72px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border);
+    text-align: center;
+    color: var(--muted);
+    font-size: 13.5px;
+  }
+  footer a { color: var(--link); }
+  .kbd {
+    display: inline-block;
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 1px 7px;
+    font-size: 12.5px;
+    color: var(--text);
+    margin: 0 2px;
+  }
+
+  @media (max-width: 600px) {
+    h1 { font-size: 30px; }
+    .tagline { font-size: 15px; }
+    .wrap { padding: 24px 16px 48px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <span class="badge">Chrome Extension · v3.0.3</span>
+    <h1>Gemini <span class="accent">Reading</span> Assistant</h1>
+    <p class="tagline">
+      The missing reading layer for Google Gemini — navigate, search, cite, export,
+      and screenshot your long AI conversations with ease.
+    </p>
+    <div class="cta-row">
+      <a class="btn btn-primary"
+         href="https://chromewebstore.google.com/detail/gemini-reading-assistant/pkjhdddhfmiobolikabciojnkigjopkg"
+         target="_blank" rel="noopener">
+        Install from Chrome Web Store
+      </a>
+      <a class="btn btn-secondary"
+         href="https://github.com/WXY395/gemini-reading-assistant"
+         target="_blank" rel="noopener">
+        View on GitHub
+      </a>
+    </div>
+  </header>
+
+  <h2>What it does</h2>
+  <div class="features">
+    <div class="feature">
+      <div class="ico">🧭</div>
+      <h3>Sidebar Navigation</h3>
+      <p>Jump to any message instantly. Filter by All / Gemini / User.</p>
+    </div>
+    <div class="feature">
+      <div class="ico">🔍</div>
+      <h3>Full-text Search</h3>
+      <p><span class="kbd">Ctrl</span><span class="kbd">Shift</span><span class="kbd">S</span> searches across the whole conversation. Supports Zhuyin / CJK IME input.</p>
+    </div>
+    <div class="feature new">
+      <div class="ico">📷</div>
+      <h3>Screenshot Tools<span class="new-badge">NEW</span></h3>
+      <p><span class="kbd">Ctrl</span><span class="kbd">Shift</span><span class="kbd">X</span> opens a floating menu with region / element / long-scroll capture.</p>
+    </div>
+    <div class="feature">
+      <div class="ico">✂️</div>
+      <h3>Selection Toolbar</h3>
+      <p>Quote or copy highlighted text with one click.</p>
+    </div>
+    <div class="feature">
+      <div class="ico">📌</div>
+      <h3>Citation Clipboard</h3>
+      <p>Save key passages and reinsert them into any Gemini prompt.</p>
+    </div>
+    <div class="feature">
+      <div class="ico">💾</div>
+      <h3>Conversation Export</h3>
+      <p>Download as Markdown, TXT (UTF-8 BOM), or JSON — nothing leaves your device.</p>
+    </div>
+    <div class="feature">
+      <div class="ico">🗂️</div>
+      <h3>Auto-save &amp; Journal</h3>
+      <p>Snapshots of your visible messages persist locally so exports stay complete.</p>
+    </div>
+    <div class="feature">
+      <div class="ico">🔒</div>
+      <h3>Privacy-first</h3>
+      <p>All data is stored locally. The only network call is Pro license verification.</p>
+    </div>
+  </div>
+
+  <div class="pro-section">
+    <h2>⚡ Pro unlocks cognitive defense tools</h2>
+    <p>For power users who work with very long conversations.</p>
+    <ul class="pro-list">
+      <li>Critical condense — let the AI surface logical gaps and base points</li>
+      <li>Weighted memory pins (phase &amp; core tiers)</li>
+      <li>One-click recall of all pinned anchors</li>
+      <li>Context usage meter (round / char / % budget)</li>
+      <li>Snapshot handoff — carry context into a fresh conversation tab</li>
+      <li>Gemini plan selector (Flash / Pro / Ultra)</li>
+      <li>Custom condense prompt</li>
+      <li>Unlimited store search results (Free tier: 20)</li>
+    </ul>
+    <div class="cta-row" style="justify-content: flex-start;">
+      <a class="btn btn-primary" href="https://gumroad.com/l/hsiowq" target="_blank" rel="noopener">
+        Get Pro on Gumroad
+      </a>
+    </div>
+  </div>
+
+  <h2>Resources</h2>
+  <div class="links-row">
+    <a href="./privacy.html">🔒 Privacy Policy</a>
+    <a href="./terms.html">📄 Terms of Use</a>
+    <a href="./support.html">🛟 Support &amp; FAQ</a>
+    <a href="https://github.com/WXY395/gemini-reading-assistant/blob/main/CHANGELOG.md">📋 Changelog</a>
+    <a href="https://github.com/WXY395/gemini-reading-assistant/issues">🐞 Report an Issue</a>
+  </div>
+
+  <footer>
+    © 2026 WXY395 · Not affiliated with Google or Gemini ·
+    <a href="https://github.com/WXY395/gemini-reading-assistant">MIT Licensed</a>
+  </footer>
+</div>
+</body>
+</html>
