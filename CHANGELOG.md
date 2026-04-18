@@ -2,7 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
-## [3.0.2] - 2026-04-16
+## [3.0.3] - 2026-04-18
+
+Initial Chrome Web Store submission of the v3.0.2 feature set. The
+functional content is unchanged from the v3.0.2 tag; the version bump
+is only to clear CWS's strictly-monotonic version check against a
+previously-reserved 3.0.2 slot.
+
+(Content below is the v3.0.2 feature list, shipping in this CWS release.)
 
 ### Added
 - **Screenshot tools** (Free tier) — `Ctrl+Shift+X` floating menu with three modes:

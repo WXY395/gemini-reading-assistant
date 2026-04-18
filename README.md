@@ -48,7 +48,7 @@ This extension solves that by adding a **reading layer** on top of Gemini.
 
 * Search conversation content from messageStore
 * Keyword highlighting + click to jump
-* **IME-friendly** — Zhuyin/CJK input supported (v3.0.2+)
+* **IME-friendly** — Zhuyin/CJK input supported (v3.0.3+)
 * Esc or Ctrl+Shift+S to close
 
 ### 📷 Screenshot Tools (Ctrl+Shift+X)
@@ -63,7 +63,7 @@ This extension solves that by adding a **reading layer** on top of Gemini.
 * Auto-save conversations
 * Snapshot + journal system
 * Export: Markdown / TXT / JSON
-* TXT export uses UTF-8 BOM for Windows compatibility (v3.0.2+)
+* TXT export uses UTF-8 BOM for Windows compatibility (v3.0.3+)
 
 ---
 

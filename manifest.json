@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Gemini Reading Assistant",
   "description": "Personal reading assistant for Google Gemini conversations.",
-  "version": "3.0.2",
+  "version": "3.0.3",
   
   "action": {
     "default_title": "Gemini Reading Assistant",
