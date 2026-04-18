@@ -6363,6 +6363,57 @@ function exportStoreToMarkdown() {
 }
 
 /**
+ * 將 Unicode 數學粗體／斜體等特殊字元正規化回普通 ASCII。
+ * Gemini 網頁使用 Mathematical Sans-Serif Bold 等 Unicode block 來渲染粗體，
+ * 這些字元（U+1D400–U+1D7FF）在多數編輯器中無法顯示，匯出時需還原。
+ */
+function normalizeUnicodeText(text) {
+  if (!text) return text || "";
+
+  // ---- 1) 數學粗體 → 普通 ASCII ----
+  var maps = [
+    [0x1D400, 26, "A"], [0x1D41A, 26, "a"],
+    [0x1D434, 26, "A"], [0x1D44E, 26, "a"],
+    [0x1D468, 26, "A"], [0x1D482, 26, "a"],
+    [0x1D5A0, 26, "A"], [0x1D5BA, 26, "a"],
+    [0x1D5D4, 26, "A"], [0x1D5EE, 26, "a"],
+    [0x1D608, 26, "A"], [0x1D622, 26, "a"],
+    [0x1D63C, 26, "A"], [0x1D656, 26, "a"],
+    [0x1D670, 26, "A"], [0x1D68A, 26, "a"],
+    [0x1D7CE, 10, "0"], [0x1D7D8, 10, "0"], [0x1D7E2, 10, "0"],
+    [0x1D7EC, 10, "0"], [0x1D7F6, 10, "0"]
+  ];
+
+  var result = "";
+  for (var i = 0; i < text.length; i++) {
+    var cp = text.codePointAt(i);
+
+    // ---- 2) 移除 Variation Selector (U+FE0F) 避免組合 emoji 殘留 ----
+    if (cp === 0xFE0F) continue;
+    // ---- 3) 移除 Combining Enclosing Keycap (U+20E3) ----
+    if (cp === 0x20E3) continue;
+
+    if (cp > 0xFFFF) {
+      // Supplementary plane (U+10000+)
+      var mapped = false;
+      for (var m = 0; m < maps.length; m++) {
+        var start = maps[m][0], len = maps[m][1], base = maps[m][2];
+        if (cp >= start && cp < start + len) {
+          result += String.fromCharCode(base.charCodeAt(0) + (cp - start));
+          mapped = true;
+          break;
+        }
+      }
+      // 未映射的補充平面字元（emoji 等）直接移除，避免亂碼
+      i++; // skip surrogate pair
+    } else {
+      result += text.charAt(i);
+    }
+  }
+  return result;
+}
+
+/**
  * 從 messageStore 匯出 TXT（純文字）。
  * export 前自動補齊漏項。
  * @returns {string}
@@ -6389,13 +6440,13 @@ function exportStoreToTxt() {
     lines.push("--- " + label + " ---");
     lines.push("");
     if (msg.role !== "user" && msg.condensed && msg.condensed.summary) {
-      lines.push("[重點] " + msg.condensed.summary);
+      lines.push("[重點] " + normalizeUnicodeText(msg.condensed.summary));
       if (msg.condensed.method) {
-        lines.push("[說明] " + msg.condensed.method);
+        lines.push("[說明] " + normalizeUnicodeText(msg.condensed.method));
       }
       lines.push("");
     }
-    lines.push(msg.text || "(無內容)");
+    lines.push(normalizeUnicodeText(msg.text) || "(無內容)");
     lines.push("");
   }
 
@@ -6554,8 +6605,51 @@ function renderSearchResults(results, keyword) {
   input.placeholder = "\u641C\u5C0B\u5C0D\u8A71\u5167\u5BB9\u2026";
   input.value = keyword || "";
 
+  // ---- IME / 鍵盤事件隔離 ----
+  // Gemini 在 document capture phase 攔截鍵盤事件，普通 stopPropagation 無效。
+  // 必須在 document capture phase 搶先攔截，用 stopImmediatePropagation 阻止後續監聽器。
+  var _graSearchShieldInstalled = window.__gra_search_shield__;
+  if (!_graSearchShieldInstalled) {
+    window.__gra_search_shield__ = true;
+    var shieldEvents = ["keydown", "keypress", "keyup", "compositionstart", "compositionupdate", "compositionend", "beforeinput", "input"];
+    shieldEvents.forEach(function (evt) {
+      document.addEventListener(evt, function (e) {
+        if (e.target && e.target.closest && e.target.closest(".gra-search-panel")) {
+          e.stopImmediatePropagation();
+        }
+      }, true); // capture phase
+    });
+  }
+
+  // 防止 IME 組字期間被搶焦點
+  var _isComposing = false;
+  input.addEventListener("compositionstart", function () { _isComposing = true; });
+  input.addEventListener("compositionend", function () {
+    _isComposing = false;
+    // 組字完成後確保焦點仍在搜尋框
+    requestAnimationFrame(function () { input.focus(); });
+  });
+  input.addEventListener("blur", function () {
+    // IME 組字中被搶焦點時立即搶回
+    if (_isComposing && document.contains(container)) {
+      requestAnimationFrame(function () { input.focus(); });
+    }
+  });
+
+  // Escape 關閉搜尋面板；Ctrl+Shift+S 也可 toggle 關閉
+  input.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") {
+      container.remove();
+    }
+    if (e.ctrlKey && e.shiftKey && e.key === "S") {
+      e.preventDefault();
+      container.remove();
+    }
+  });
+
   var debounceTimer = null;
   input.addEventListener("input", function () {
+    if (_isComposing) return; // IME 組字中不觸發搜尋
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(function () {
       handleSearch(input.value.trim());
@@ -6565,7 +6659,7 @@ function renderSearchResults(results, keyword) {
   var closeBtn = document.createElement("button");
   closeBtn.className = "gra-search-panel__close";
   closeBtn.textContent = "\u2715";
-  closeBtn.title = "\u95DC\u9589\u641C\u5C0B";
+  closeBtn.title = "\u95DC\u9589\u641C\u5C0B (Esc)";
   closeBtn.addEventListener("click", function () {
     container.remove();
   });
@@ -6648,6 +6742,585 @@ document.addEventListener("keydown", function (e) {
     }
   }
 });
+
+// ---- Screenshot Module (Free) ---------------------------------------------
+
+var GRAScreenshot = (function () {
+  "use strict";
+
+  var overlay = null;
+  var currentMode = null; // "region" | "element" | "scroll"
+  var dpr = window.devicePixelRatio || 1;
+
+  // ---- Shared helpers ----
+
+  function captureVisibleTab() {
+    return new Promise(function (resolve, reject) {
+      chrome.runtime.sendMessage({ type: "GRA_CAPTURE_VISIBLE_TAB" }, function (res) {
+        if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
+        if (!res || !res.ok) return reject(new Error((res && res.error) || "capture_failed"));
+        resolve(res.dataUrl);
+      });
+    });
+  }
+
+  function loadImage(dataUrl) {
+    return new Promise(function (resolve, reject) {
+      var img = new Image();
+      img.onload = function () { resolve(img); };
+      img.onerror = reject;
+      img.src = dataUrl;
+    });
+  }
+
+  function cropToRect(dataUrl, rect) {
+    return loadImage(dataUrl).then(function (img) {
+      var canvas = document.createElement("canvas");
+      var x = Math.round(rect.x * dpr);
+      var y = Math.round(rect.y * dpr);
+      var w = Math.round(rect.width * dpr);
+      var h = Math.round(rect.height * dpr);
+      canvas.width = w;
+      canvas.height = h;
+      var ctx = canvas.getContext("2d");
+      ctx.drawImage(img, x, y, w, h, 0, 0, w, h);
+      return canvas.toDataURL("image/png");
+    });
+  }
+
+  function downloadPng(dataUrl) {
+    var ts = new Date().toISOString().slice(0, 19).replace(/[:-]/g, "");
+    var a = document.createElement("a");
+    a.href = dataUrl;
+    a.download = "gemini-screenshot-" + ts + ".png";
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+
+  function cleanup() {
+    if (overlay) {
+      overlay.remove();
+      overlay = null;
+    }
+    currentMode = null;
+    document.body.style.cursor = "";
+  }
+
+  function injectStyles() {
+    if (document.getElementById("gra-screenshot-styles")) return;
+    var s = document.createElement("style");
+    s.id = "gra-screenshot-styles";
+    s.textContent =
+      ".gra-ss-overlay{position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:99999;cursor:crosshair}" +
+      ".gra-ss-overlay--region{background:rgba(0,0,0,.3)}" +
+      ".gra-ss-overlay--element{background:transparent}" +
+      ".gra-ss-selection{position:fixed;border:2px solid #f97316;background:rgba(249,115,22,.12);pointer-events:none;z-index:100000}" +
+      ".gra-ss-selection__size{position:absolute;bottom:-22px;right:0;font:11px/1 system-ui;color:#fff;background:#f97316;padding:2px 6px;border-radius:3px;white-space:nowrap}" +
+      ".gra-ss-highlight{outline:3px solid #f97316;outline-offset:-1px;cursor:pointer}" +
+      ".gra-ss-toast{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#1a1a1a;color:#fff;padding:12px 24px;border-radius:8px;font:14px/1.4 system-ui;z-index:100001;pointer-events:none;opacity:0;transition:opacity .2s}" +
+      ".gra-ss-toast--show{opacity:1}" +
+      ".gra-ss-hint{position:fixed;top:12px;left:50%;transform:translateX(-50%);background:#1a1a1a;color:#ccc;padding:8px 16px;border-radius:6px;font:13px/1.4 system-ui;z-index:100000;pointer-events:none;border:1px solid #333}";
+    document.head.appendChild(s);
+  }
+
+  function showHint(text) {
+    var hint = document.createElement("div");
+    hint.className = "gra-ss-hint";
+    hint.textContent = text;
+    document.body.appendChild(hint);
+    return hint;
+  }
+
+  function showToast(text, ms) {
+    var t = document.createElement("div");
+    t.className = "gra-ss-toast";
+    t.textContent = text;
+    document.body.appendChild(t);
+    requestAnimationFrame(function () { t.classList.add("gra-ss-toast--show"); });
+    setTimeout(function () {
+      t.classList.remove("gra-ss-toast--show");
+      setTimeout(function () { t.remove(); }, 300);
+    }, ms || 1200);
+    return t;
+  }
+
+  /** 立即移除所有截圖相關的 toast 和 hint，避免遮擋截圖內容 */
+  function removeAllOverlayUI() {
+    document.querySelectorAll(".gra-ss-toast, .gra-ss-hint").forEach(function (el) { el.remove(); });
+  }
+
+  // ---- Mode 1: Region selection ----
+
+  function startRegion() {
+    injectStyles();
+    cleanup();
+    currentMode = "region";
+
+    overlay = document.createElement("div");
+    overlay.className = "gra-ss-overlay gra-ss-overlay--region";
+    document.body.appendChild(overlay);
+
+    var hint = showHint("拖曳選取截圖區域 · Esc 取消");
+    var selBox = null;
+    var startX = 0, startY = 0;
+    var isDragging = false;
+
+    function onMouseDown(e) {
+      if (e.button !== 0) return;
+      isDragging = true;
+      startX = e.clientX;
+      startY = e.clientY;
+      selBox = document.createElement("div");
+      selBox.className = "gra-ss-selection";
+      selBox.innerHTML = '<span class="gra-ss-selection__size"></span>';
+      document.body.appendChild(selBox);
+    }
+
+    function onMouseMove(e) {
+      if (!isDragging || !selBox) return;
+      var x = Math.min(e.clientX, startX);
+      var y = Math.min(e.clientY, startY);
+      var w = Math.abs(e.clientX - startX);
+      var h = Math.abs(e.clientY - startY);
+      selBox.style.left = x + "px";
+      selBox.style.top = y + "px";
+      selBox.style.width = w + "px";
+      selBox.style.height = h + "px";
+      var label = selBox.querySelector(".gra-ss-selection__size");
+      if (label) label.textContent = Math.round(w * dpr) + " x " + Math.round(h * dpr);
+    }
+
+    function onMouseUp(e) {
+      if (!isDragging) return;
+      isDragging = false;
+      var x = Math.min(e.clientX, startX);
+      var y = Math.min(e.clientY, startY);
+      var w = Math.abs(e.clientX - startX);
+      var h = Math.abs(e.clientY - startY);
+      if (selBox) selBox.remove();
+      hint.remove();
+      cleanup();
+
+      if (w < 10 || h < 10) return; // too small
+
+      showToast("截圖中…");
+      captureVisibleTab()
+        .then(function (dataUrl) { return cropToRect(dataUrl, { x: x, y: y, width: w, height: h }); })
+        .then(downloadPng)
+        .catch(function (err) { console.warn("[GRA][screenshot] region error:", err); showToast("截圖失敗"); });
+    }
+
+    function onKeyDown(e) {
+      if (e.key === "Escape") {
+        if (selBox) selBox.remove();
+        hint.remove();
+        cleanup();
+        unbind();
+      }
+    }
+
+    function unbind() {
+      overlay && overlay.removeEventListener("mousedown", onMouseDown);
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+      document.removeEventListener("keydown", onKeyDown, true);
+    }
+
+    overlay.addEventListener("mousedown", onMouseDown);
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+    document.addEventListener("keydown", onKeyDown, true);
+  }
+
+  // ---- Mode 2: Element click ----
+
+  function startElement() {
+    injectStyles();
+    cleanup();
+    currentMode = "element";
+
+    overlay = document.createElement("div");
+    overlay.className = "gra-ss-overlay gra-ss-overlay--element";
+    document.body.appendChild(overlay);
+
+    var hint = showHint("點擊要截圖的區塊 · Esc 取消");
+    var lastHighlighted = null;
+
+    function clearHighlight() {
+      if (lastHighlighted) {
+        lastHighlighted.classList.remove("gra-ss-highlight");
+        lastHighlighted = null;
+      }
+    }
+
+    function pickElement(clientX, clientY) {
+      // Temporarily hide overlay to hit-test real elements
+      overlay.style.pointerEvents = "none";
+      var el = document.elementFromPoint(clientX, clientY);
+      overlay.style.pointerEvents = "";
+      if (!el || el === document.body || el === document.documentElement) return null;
+
+      // Walk up to find a meaningful block (message, section, article, etc.)
+      var candidate = el;
+      var maxDepth = 8;
+      while (candidate && maxDepth-- > 0) {
+        var tag = candidate.tagName;
+        if (tag === "ARTICLE" || tag === "SECTION" || tag === "PRE" || tag === "BLOCKQUOTE") break;
+        if (candidate.getAttribute && candidate.getAttribute("data-message-id")) break;
+        if (candidate.getAttribute && candidate.getAttribute("data-gra-message-id")) break;
+        if (candidate.classList && (candidate.classList.contains("model-response") ||
+            candidate.classList.contains("query-text") ||
+            candidate.classList.contains("response-container"))) break;
+        // Stop at reasonable block size
+        var rect = candidate.getBoundingClientRect();
+        if (rect.width > 200 && rect.height > 60) break;
+        candidate = candidate.parentElement;
+      }
+      return candidate || el;
+    }
+
+    function onMouseMove(e) {
+      clearHighlight();
+      var el = pickElement(e.clientX, e.clientY);
+      if (el && !el.closest(".gra-ss-overlay") && !el.closest(".gra-ss-hint")) {
+        el.classList.add("gra-ss-highlight");
+        lastHighlighted = el;
+      }
+    }
+
+    function onClick(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      var el = lastHighlighted;
+      clearHighlight();
+      hint.remove();
+      cleanup();
+      unbind();
+      if (!el) return;
+
+      var rect = el.getBoundingClientRect();
+      if (rect.width < 5 || rect.height < 5) return;
+
+      showToast("截圖中…");
+      captureVisibleTab()
+        .then(function (dataUrl) { return cropToRect(dataUrl, rect); })
+        .then(downloadPng)
+        .catch(function (err) { console.warn("[GRA][screenshot] element error:", err); showToast("截圖失敗"); });
+    }
+
+    function onKeyDown(e) {
+      if (e.key === "Escape") {
+        clearHighlight();
+        hint.remove();
+        cleanup();
+        unbind();
+      }
+    }
+
+    function unbind() {
+      document.removeEventListener("mousemove", onMouseMove, true);
+      document.removeEventListener("click", onClick, true);
+      document.removeEventListener("keydown", onKeyDown, true);
+    }
+
+    document.addEventListener("mousemove", onMouseMove, true);
+    document.addEventListener("click", onClick, true);
+    document.addEventListener("keydown", onKeyDown, true);
+  }
+
+  // ---- Mode 3: Scroll capture ----
+
+  function startScroll() {
+    injectStyles();
+    cleanup();
+    currentMode = "scroll";
+
+    var TAG = "[GRA][screenshot][scroll]";
+    var cancelled = false;
+
+    // ---- Escape key to cancel ----
+    function onKeyDown(e) {
+      if (e.key === "Escape") {
+        cancelled = true;
+        scrollEl && (scrollEl.scrollTop = originalScroll);
+        captures = [];
+        removeAllOverlayUI();
+        cleanup();
+        unbindEsc();
+        showToast("已取消");
+      }
+    }
+    function unbindEsc() {
+      document.removeEventListener("keydown", onKeyDown, true);
+    }
+    document.addEventListener("keydown", onKeyDown, true);
+
+    // ---- 1) Find the scrollable conversation container ----
+    var scrollEl = null;
+
+    // Approach A: Gemini known patterns
+    var geminiCandidates = [
+      document.querySelector("[class*='conversation-container']"),
+      document.querySelector("[class*='chat-history']"),
+      document.querySelector("[class*='response-container-content']"),
+      document.querySelector("main [role='presentation']")
+    ];
+    for (var gi = 0; gi < geminiCandidates.length; gi++) {
+      var gc = geminiCandidates[gi];
+      if (gc && gc.scrollHeight > gc.clientHeight + 50) {
+        scrollEl = gc;
+        break;
+      }
+    }
+
+    // Approach B: scan for overflow scroll/auto
+    if (!scrollEl) {
+      var main = document.querySelector("main[role='main']") || document.querySelector("main") || document.body;
+      var allEls = main.querySelectorAll("*");
+      var bestScore = 0;
+      for (var i = 0; i < allEls.length; i++) {
+        var el = allEls[i];
+        if (el.clientHeight < 150) continue;
+        var overflow = el.scrollHeight - el.clientHeight;
+        if (overflow < 30) continue;
+        var cs = getComputedStyle(el);
+        if (cs.overflowY !== "auto" && cs.overflowY !== "scroll") continue;
+        if (overflow > bestScore) { bestScore = overflow; scrollEl = el; }
+      }
+    }
+
+    // Approach C: document scrolling element
+    if (!scrollEl) {
+      var docEl = document.scrollingElement || document.documentElement;
+      if (docEl.scrollHeight > docEl.clientHeight + 50) scrollEl = docEl;
+    }
+
+    if (!scrollEl) {
+      showToast("找不到可捲動的對話區域");
+      console.warn(TAG, "No scrollable container found");
+      unbindEsc();
+      return;
+    }
+
+    console.info(TAG, "scrollEl:", scrollEl.tagName, scrollEl.className,
+      "scrollH:", scrollEl.scrollHeight, "clientH:", scrollEl.clientHeight);
+
+    var totalHeight = scrollEl.scrollHeight;
+    var viewHeight = scrollEl.clientHeight;
+    var scrollRect = scrollEl.getBoundingClientRect();
+    var originalScroll = scrollEl.scrollTop;
+
+    if (totalHeight <= viewHeight + 20) {
+      showToast("截圖中…（1 段）");
+      captureVisibleTab()
+        .then(function (dataUrl) { return cropToRect(dataUrl, scrollRect); })
+        .then(downloadPng)
+        .catch(function (err) { console.warn(TAG, err); showToast("截圖失敗"); })
+        .finally(unbindEsc);
+      return;
+    }
+
+    // ---- 2) Calculate scroll positions ----
+    var maxScrollableHeight = totalHeight - viewHeight;
+    var positions = [];
+    for (var pos = 0; pos <= maxScrollableHeight; pos += viewHeight) {
+      positions.push(pos);
+    }
+    if (positions[positions.length - 1] < maxScrollableHeight) {
+      positions.push(maxScrollableHeight);
+    }
+
+    console.info(TAG, "positions:", positions.length, "totalH:", totalHeight, "viewH:", viewHeight);
+    showToast("長截圖擷取中… (" + positions.length + " 段)  Esc 取消", 1500);
+
+    var captures = [];
+    var index = 0;
+
+    // Wait for toast to fade, then start
+    setTimeout(function () {
+      if (cancelled) return;
+      removeAllOverlayUI();
+      captureNext();
+    }, 1600);
+
+    // ---- 3) Capture loop ----
+    function captureNext() {
+      if (cancelled) return;
+      if (index >= positions.length) {
+        stitchAndDownload();
+        return;
+      }
+      scrollEl.scrollTop = positions[index];
+
+      setTimeout(function () {
+        if (cancelled) return;
+        captureVisibleTab().then(function (dataUrl) {
+          if (cancelled) return;
+          console.info(TAG, "captured", index + 1, "/", positions.length);
+          captures.push({ dataUrl: dataUrl, scrollTop: scrollEl.scrollTop });
+          index++;
+          captureNext();
+        }).catch(function (err) {
+          console.warn(TAG, "capture error at segment", index, err);
+          scrollEl.scrollTop = originalScroll;
+          captures = [];
+          unbindEsc();
+          showToast("截圖失敗: " + (err.message || err));
+        });
+      }, 500);
+    }
+
+    // ---- 4) Stitch all segments ----
+    function stitchAndDownload() {
+      scrollEl.scrollTop = originalScroll;
+      unbindEsc();
+
+      if (!captures.length) {
+        showToast("無擷取資料");
+        return;
+      }
+
+      var cropX = Math.round(scrollRect.left * dpr);
+      var cropY = Math.round(scrollRect.top * dpr);
+      var cropW = Math.round(scrollRect.width * dpr);
+      var cropH = Math.round(viewHeight * dpr);
+
+      var canvasH = Math.round(totalHeight * dpr);
+      var MAX_CANVAS = 32000;
+      var truncated = canvasH > MAX_CANVAS;
+      if (truncated) canvasH = MAX_CANVAS;
+
+      console.info(TAG, "stitching", captures.length, "segments, canvas:", cropW, "x", canvasH, truncated ? "(truncated)" : "");
+
+      var canvas = document.createElement("canvas");
+      canvas.width = cropW;
+      canvas.height = canvasH;
+      var ctx = canvas.getContext("2d");
+
+      if (!ctx) {
+        showToast("Canvas 建立失敗");
+        captures = [];
+        return;
+      }
+
+      var loadPromises = captures.map(function (c) { return loadImage(c.dataUrl); });
+
+      Promise.all(loadPromises).then(function (imgs) {
+        for (var i = 0; i < imgs.length; i++) {
+          var destY = Math.round(captures[i].scrollTop * dpr);
+          var drawH = Math.min(cropH, canvasH - destY);
+          if (drawH <= 0) continue;
+          ctx.drawImage(imgs[i], cropX, cropY, cropW, drawH, 0, destY, cropW, drawH);
+        }
+
+        // Release references
+        captures = [];
+
+        try {
+          var result = canvas.toDataURL("image/png");
+          if (!result || result.length < 100) {
+            showToast("圖片生成失敗（Canvas 過大）");
+            return;
+          }
+          downloadPng(result);
+          showToast(truncated ? "長截圖已下載（內容過長，已截至上限）" : "長截圖已下載");
+        } catch (e) {
+          console.warn(TAG, "toDataURL error:", e);
+          showToast("圖片生成失敗");
+        }
+      }).catch(function (err) {
+        captures = [];
+        console.warn(TAG, "stitch error:", err);
+        showToast("拼接失敗");
+      });
+    }
+  }
+
+  // ---- Public API ----
+
+  return {
+    startRegion: startRegion,
+    startElement: startElement,
+    startScroll: startScroll,
+    cleanup: cleanup
+  };
+})();
+
+// ---- Screenshot 快捷鍵 (Ctrl+Shift+X) → 浮動選單 -------------------------
+
+(function () {
+  var menuEl = null;
+
+  function removeMenu() {
+    if (menuEl) { menuEl.remove(); menuEl = null; }
+  }
+
+  function showMenu() {
+    removeMenu();
+
+    menuEl = document.createElement("div");
+    menuEl.style.cssText =
+      "position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:100002;" +
+      "background:#1a1a1a;border:1px solid #444;border-radius:10px;padding:12px;display:flex;gap:8px;" +
+      "box-shadow:0 8px 32px rgba(0,0,0,.6);font-family:system-ui,sans-serif";
+
+    var items = [
+      { label: "框選截圖", hint: "拖曳選取區域", fn: GRAScreenshot.startRegion },
+      { label: "元素截圖", hint: "點擊選取區塊", fn: GRAScreenshot.startElement },
+      { label: "長截圖",   hint: "自動捲動拼接", fn: GRAScreenshot.startScroll }
+    ];
+
+    items.forEach(function (item) {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.style.cssText =
+        "background:#262626;border:1px solid #555;border-radius:8px;color:#e0e0e0;padding:14px 18px;" +
+        "cursor:pointer;font-size:14px;line-height:1.4;text-align:center;min-width:100px;transition:background .15s";
+      btn.innerHTML = "<div style='font-size:15px;font-weight:600'>" + item.label + "</div>" +
+                       "<div style='font-size:11px;color:#888;margin-top:4px'>" + item.hint + "</div>";
+      btn.addEventListener("mouseenter", function () { btn.style.background = "#333"; });
+      btn.addEventListener("mouseleave", function () { btn.style.background = "#262626"; });
+      btn.addEventListener("click", function () {
+        removeMenu();
+        try { item.fn(); } catch (e) { console.warn("[GRA][screenshot] mode launch error:", e); }
+      });
+      menuEl.appendChild(btn);
+    });
+
+    document.body.appendChild(menuEl);
+
+    // Esc 或點選外部關閉
+    function onKey(e) {
+      if (e.key === "Escape") { removeMenu(); unbind(); }
+    }
+    function onClick(e) {
+      if (menuEl && !menuEl.contains(e.target)) { removeMenu(); unbind(); }
+    }
+    function unbind() {
+      document.removeEventListener("keydown", onKey, true);
+      document.removeEventListener("mousedown", onClick, true);
+    }
+    document.addEventListener("keydown", onKey, true);
+    // Delay click listener to avoid the triggering click closing the menu
+    setTimeout(function () {
+      document.addEventListener("mousedown", onClick, true);
+    }, 100);
+  }
+
+  document.addEventListener("keydown", function (e) {
+    if (e.ctrlKey && e.shiftKey && (e.key === "X" || e.key === "x")) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (menuEl) {
+        removeMenu();
+      } else {
+        showMenu();
+      }
+    }
+  }, true);
+})();
 
 // ---- Snapshot Export (V2.9D) ----------------------------------------------
 
@@ -6852,6 +7525,17 @@ const GeminiReadingAssistant = (() => {
         case "GRA_OPEN_SEARCH_UI":
           PageSearchModule.open(currentSettings);
           sendResponse({ ok: true });
+          break;
+        case "GRA_START_SCREENSHOT":
+          try {
+            var ssMode = (message.payload && message.payload.mode) || "region";
+            if (ssMode === "element") GRAScreenshot.startElement();
+            else if (ssMode === "scroll") GRAScreenshot.startScroll();
+            else GRAScreenshot.startRegion();
+            sendResponse({ ok: true });
+          } catch (e) {
+            sendResponse({ ok: false, error: String(e) });
+          }
           break;
         case "GRA_GET_DIAGNOSTICS":
           (async () => {

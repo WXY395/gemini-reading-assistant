@@ -95,7 +95,9 @@
    * 觸發檔案下載（blob + anchor）。
    */
   function triggerDownload(content, filename, mimeType) {
-    const blob = new Blob([content], { type: mimeType || "text/plain;charset=utf-8" });
+    // 加上 UTF-8 BOM，確保 Windows 記事本等編輯器能正確辨識編碼
+    const bom = "\uFEFF";
+    const blob = new Blob([bom + content], { type: mimeType || "text/plain;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -682,6 +684,38 @@
     }
   }
 
+  // ---- Screenshot buttons ----------------------------------------------------
+
+  function bindScreenshotButtons() {
+    var modes = [
+      { id: "gra-btn-ss-region", mode: "region" },
+      { id: "gra-btn-ss-element", mode: "element" },
+      { id: "gra-btn-ss-scroll", mode: "scroll" }
+    ];
+
+    modes.forEach(function (m) {
+      var btn = document.getElementById(m.id);
+      if (!btn) return;
+      btn.addEventListener("click", async function () {
+        try {
+          var tabs = await new Promise(function (resolve) {
+            chrome.tabs.query({ active: true, currentWindow: true }, resolve);
+          });
+          var activeTab = tabs && tabs[0];
+          if (!activeTab || !activeTab.id) return;
+
+          chrome.tabs.sendMessage(
+            activeTab.id,
+            { type: "GRA_START_SCREENSHOT", payload: { mode: m.mode } },
+            function () { void chrome.runtime.lastError; }
+          );
+          // Close popup so user can interact with the page
+          window.close();
+        } catch (_) {}
+      });
+    });
+  }
+
   // ---- License UI (Pro) -----------------------------------------------------
 
   var GUMROAD_PRODUCT_ID = "AR4HmEQdU1OmdDAm2V3ayA==";
@@ -801,6 +835,7 @@
     fetchAndRenderJournalStatus(elements);
     renderKnowledgeCards(elements);
     initLicenseUI();
+    bindScreenshotButtons();
   });
 })();
 

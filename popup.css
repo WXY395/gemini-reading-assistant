@@ -344,6 +344,44 @@ body {
   color: #ef4444;
 }
 
+/* ---- Screenshot ---------------------------------------------------------- */
+
+.gra-popup-screenshot {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #1f2933;
+}
+
+.gra-popup-screenshot__header {
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.gra-popup-screenshot__shortcut {
+  font-size: 10px;
+  color: #6b7280;
+  background: #1f2933;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: monospace;
+}
+
+.gra-popup-screenshot__title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #9ca3af;
+}
+
+.gra-popup-screenshot__actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
 /* ---- Diagnostics --------------------------------------------------------- */
 
 .gra-popup-diagnostics {

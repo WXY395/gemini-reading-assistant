@@ -16,8 +16,23 @@ chrome.runtime.onInstalled.addListener((details) => {
   // 目前 V1 不進行任何寫入以保持行為最小化。
 });
 
-// License verification via Service Worker (avoids popup CORS issues)
+// Message handler (license verification, screenshot capture, etc.)
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // ---- Screenshot: captureVisibleTab (must run in service worker) ----
+  if (message.type === "GRA_CAPTURE_VISIBLE_TAB") {
+    chrome.tabs.captureVisibleTab(null, { format: "png" }, (dataUrl) => {
+      if (chrome.runtime.lastError) {
+        sendResponse({ ok: false, error: chrome.runtime.lastError.message });
+      } else if (!dataUrl) {
+        sendResponse({ ok: false, error: "no_data_returned" });
+      } else {
+        sendResponse({ ok: true, dataUrl });
+      }
+    });
+    return true; // async sendResponse
+  }
+
+  // ---- License verification via Service Worker (avoids popup CORS issues) ----
   if (message.type === "GRA_VERIFY_LICENSE") {
     fetch("https://api.gumroad.com/v2/licenses/verify", {
       method: "POST",

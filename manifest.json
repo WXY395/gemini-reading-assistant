@@ -1,5 +1,4 @@
 {
-  "//_comment": "Gemini Reading Assistant - Chrome Extension (Manifest V3)",
   "manifest_version": 3,
   "name": "Gemini Reading Assistant",
   "description": "Personal reading assistant for Google Gemini conversations.",
@@ -14,7 +13,8 @@
     "type": "module"
   },
   "permissions": [
-    "storage"
+    "storage",
+    "activeTab"
   ],
   "host_permissions": [
     "https://gemini.google.com/*",
