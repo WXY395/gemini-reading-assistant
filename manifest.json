@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Gemini Reading Assistant",
   "description": "Personal reading assistant for Google Gemini conversations.",
-  "version": "3.0.3",
+  "version": "3.0.11",
   
   "action": {
     "default_title": "Gemini Reading Assistant",
@@ -14,11 +14,13 @@
   },
   "permissions": [
     "storage",
-    "activeTab"
+    "activeTab",
+    "tabs"
   ],
   "host_permissions": [
     "https://gemini.google.com/*",
-    "https://api.gumroad.com/*"
+    "https://api.gumroad.com/*",
+    "<all_urls>"
   ],
   "web_accessible_resources": [
     {

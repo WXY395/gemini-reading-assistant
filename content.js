@@ -6588,9 +6588,21 @@ function renderSearchResults(results, keyword) {
   }
 
   // 動態避讓左右 nav
-  var geminiNav = document.querySelector("nav") || document.querySelector("[class*='side-nav']");
+  // ⚠️ 不可用 [class*='side-nav'] — Gemini 在 <chat-app> 根 element 上加 .side-nav-open
+  // 狀態旗標 class，會被模糊匹配誤抓成側邊欄，導致 panel.left = viewport width（整個面板飛出畫面）。
+  // 優先用精確 tagName，並加 sanity check：若寬度 > viewport 一半，肯定抓錯。
+  var geminiNav =
+    document.querySelector("bard-sidenav") ||
+    document.querySelector("side-navigation-v2") ||
+    document.querySelector("nav");
+  var geminiNavWidth = 0;
+  if (geminiNav) {
+    var w = geminiNav.offsetWidth || 0;
+    // 若抓到的寬度異常（超過 viewport 一半），視為抓錯元素，fallback 到預設值
+    geminiNavWidth = w > 0 && w < window.innerWidth * 0.5 ? w : 0;
+  }
   var graNav = document.querySelector(".gra-sidebar-nav");
-  container.style.left = (geminiNav ? geminiNav.offsetWidth : 300) + "px";
+  container.style.left = geminiNavWidth + "px";
   container.style.right = (graNav ? graNav.offsetWidth : 0) + "px";
 
   container.innerHTML = "";
@@ -6607,25 +6619,36 @@ function renderSearchResults(results, keyword) {
 
   // ---- IME / 鍵盤事件隔離 ----
   // Gemini 在 document capture phase 攔截鍵盤事件，普通 stopPropagation 無效。
-  // 必須在 document capture phase 搶先攔截，用 stopImmediatePropagation 阻止後續監聽器。
+  // 只屏蔽「帶 modifier 鍵的快捷鍵」，不屏蔽一般文字輸入與 input/composition 事件。
+  // 【重要】input / beforeinput / composition 事件絕對不能 stopImmediatePropagation，
+  //   否則事件在 capture phase 被截斷，永遠到不了 input 元素本身，debounce 無法觸發。
   var _graSearchShieldInstalled = window.__gra_search_shield__;
   if (!_graSearchShieldInstalled) {
     window.__gra_search_shield__ = true;
-    var shieldEvents = ["keydown", "keypress", "keyup", "compositionstart", "compositionupdate", "compositionend", "beforeinput", "input"];
-    shieldEvents.forEach(function (evt) {
+    ["keydown", "keypress", "keyup"].forEach(function (evt) {
       document.addEventListener(evt, function (e) {
-        if (e.target && e.target.closest && e.target.closest(".gra-search-panel")) {
-          e.stopImmediatePropagation();
-        }
-      }, true); // capture phase
+        if (!e.target || !e.target.closest || !e.target.closest(".gra-search-panel")) return;
+        // 沒有 modifier 鍵 → 一般文字輸入，讓事件正常到達 input 元素
+        if (!e.ctrlKey && !e.metaKey && !e.altKey) return;
+        // Ctrl/Meta + 標準文字編輯捷徑 → 允許（Ctrl+A/C/V/X/Z/Y）
+        if ((e.ctrlKey || e.metaKey) && "acvxzyACVXZY".includes(e.key)) return;
+        // 其餘帶 modifier 的組合（Gemini 頁面快捷鍵）→ 屏蔽
+        e.stopImmediatePropagation();
+      }, true);
     });
+    // input / beforeinput / composition 事件：完全不屏蔽，讓 input 元素自行處理
   }
 
-  // 防止 IME 組字期間被搶焦點
+  // 防止 IME 組字期間被搶焦點（_isComposing 只用於焦點管理，不 gate 搜尋）
   var _isComposing = false;
   input.addEventListener("compositionstart", function () { _isComposing = true; });
   input.addEventListener("compositionend", function () {
     _isComposing = false;
+    // 組字確認後強制觸發一次搜尋，確保最終字元一定被搜尋到
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(function () {
+      handleSearch(input.value.trim());
+    }, 200);
     // 組字完成後確保焦點仍在搜尋框
     requestAnimationFrame(function () { input.focus(); });
   });
@@ -6648,8 +6671,13 @@ function renderSearchResults(results, keyword) {
   });
 
   var debounceTimer = null;
-  input.addEventListener("input", function () {
-    if (_isComposing) return; // IME 組字中不觸發搜尋
+  input.addEventListener("input", function (e) {
+    // 使用原生 e.isComposing（瀏覽器直接設定，不受 compositionend 被攔截影響）：
+    //   - 組字期間 (e.isComposing = true)：跳過，避免 DOM 重建摧毀 IME 選字框
+    //   - 組字結束後 (e.isComposing = false)：觸發搜尋
+    // 若 compositionend 被 Gemini capture-phase 攔截，下一個 input 的
+    // e.isComposing 仍會是 false，保證搜尋最終能觸發（compositionend 亦獨立觸發）。
+    if (e.isComposing) return;
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(function () {
       handleSearch(input.value.trim());
@@ -6703,8 +6731,23 @@ function renderSearchResults(results, keyword) {
       item.appendChild(preview);
 
       item.addEventListener("click", function () {
-        var el = document.querySelector("[data-gra-message-id=\"" + msg.id + "\"]");
-        if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+        // 先關閉面板，再滾動 — 避免面板遮住目標訊息
+        var targetId = msg.id;
+        container.remove();
+        requestAnimationFrame(function () {
+          var el = document.querySelector("[data-gra-message-id=\"" + targetId + "\"]");
+          if (!el) return;
+          el.scrollIntoView({ behavior: "smooth", block: "start" });
+          // 短暫高亮目標訊息
+          var prevOutline = el.style.outline;
+          var prevTransition = el.style.transition;
+          el.style.transition = "outline 0.2s";
+          el.style.outline = "2px solid #f97316";
+          setTimeout(function () {
+            el.style.outline = prevOutline;
+            el.style.transition = prevTransition;
+          }, 1500);
+        });
       });
 
       list.appendChild(item);
@@ -6718,30 +6761,119 @@ function renderSearchResults(results, keyword) {
 }
 
 /**
+ * DOM 補抓：搜尋觸發時，若 messageStore 偏少，主動掃描目前可見的訊息節點。
+ * findMessageElements() 被封裝在 SidebarNavigationModule 內，此函式獨立重現相同選取邏輯。
+ * 冪等：已存在的 id 不覆蓋。
+ * @returns {number} 新增筆數
+ */
+function backfillMessageStoreFromDOM() {
+  const root =
+    document.querySelector("main[role='main']") ||
+    document.querySelector("main") ||
+    document.body;
+  if (!root) return 0;
+
+  // Gemini 使用 user-query / model-response 自訂元素（最高可信度）
+  // 同時嘗試其他通用選擇器作為備援，全部合併避免遺漏
+  const SELECTORS = [
+    "user-query",
+    "model-response",
+    "[data-message-id]",
+    "[data-qa='message']",
+    "[data-qa='conversation-turn']",
+    "[role='listitem'][data-author]",
+    "[role='listitem'][data-message-author]",
+    "article"
+  ];
+
+  // 收集所有符合的元素（不在首次命中即停止），去重並依文件順序排列
+  const seen = new Set();
+  for (var s = 0; s < SELECTORS.length; s++) {
+    try {
+      Array.from(root.querySelectorAll(SELECTORS[s])).forEach(function (el) {
+        if (el instanceof HTMLElement) seen.add(el);
+      });
+    } catch (_) {}
+  }
+
+  var elements = Array.from(seen);
+  elements.sort(function (a, b) {
+    var pos = a.compareDocumentPosition(b);
+    if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+    if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+    return 0;
+  });
+
+  var added = 0;
+  elements.forEach(function (el, i) {
+    // 優先使用 rebuildNavigation 已標記的 id，否則自動生成
+    var id = el.getAttribute("data-gra-message-id") || el.getAttribute("data-message-id");
+    if (!id) {
+      var snippet = (el.textContent || "").trim().slice(0, 30).replace(/\s+/g, "_");
+      id = "gra_bf_" + i + "_" + snippet;
+      el.setAttribute("data-gra-message-id", id);
+    }
+    if (messageStore.has(id)) return;
+    var role = __gra_detectRole(el);
+    var msgType = role === "assistant" ? "gemini" : (role === "user" ? "user" : "unknown");
+    try { finalizeMessage(el, msgType); added++; } catch (e) {
+      console.warn("[GRA][backfill] finalizeMessage error:", e);
+    }
+  });
+
+  return added;
+}
+
+/**
  * 搜尋入口。
  * @param {string} keyword
  */
 function handleSearch(keyword) {
-  ensureAllMessagesFinalized();
+  // 有關鍵字才執行 backfill（避免開啟面板時因 DOM 掃描造成卡頓）
+  if (keyword) {
+    try { backfillMessageStoreFromDOM(); } catch (e) {
+      console.warn("[GRA][backfill] DOM backfill failed:", e);
+    }
+    try { ensureAllMessagesFinalized(); } catch (e) {
+      console.warn("[GRA][search] ensureAllMessagesFinalized failed:", e);
+    }
+  }
   var results = searchMessages(keyword);
   renderSearchResults(results, keyword);
+
+  // 重建 panel 後恢復 input 焦點與游標位置
+  if (keyword) {
+    var inp = document.querySelector(".gra-search-panel__input");
+    if (inp && document.activeElement !== inp) {
+      inp.focus();
+      try { inp.setSelectionRange(inp.value.length, inp.value.length); } catch (_) {}
+    }
+  }
 }
 
 // ---- Store Search 鍵盤快捷鍵 (Ctrl+Shift+S) ----
-document.addEventListener("keydown", function (e) {
-  if (e.ctrlKey && e.shiftKey && e.key === "S") {
-    e.preventDefault();
-    var existing = document.querySelector(".gra-search-panel");
-    if (existing) {
-      existing.remove();
-    } else {
-      handleSearch("");
-      // 自動 focus 到搜尋輸入框
-      var input = document.querySelector(".gra-search-panel__input");
-      if (input) input.focus();
-    }
+// 綁在 window capture phase（事件路徑最早階段），搶先 Gemini sidebar / 頁面的
+// 所有鍵盤監聽器。即使 Gemini 左側邊欄開啟時自行綁定 S 鍵快捷鍵，也能被 GRA 攔截。
+// 使用 e.code === "KeyS" 而非 e.key（e.key 在 IME 組字時可能變成 "Process"）。
+function __gra_openStoreSearch(e) {
+  if (!(e.ctrlKey && e.shiftKey)) return;
+  var isS = e.code === "KeyS" || e.key === "S" || e.key === "s";
+  if (!isS) return;
+  e.preventDefault();
+  e.stopImmediatePropagation(); // 阻斷後續所有監聽器（含 Gemini sidebar 的捷徑）
+  var existing = document.querySelector(".gra-search-panel");
+  if (existing) {
+    existing.remove();
+  } else {
+    handleSearch("");
+    var input = document.querySelector(".gra-search-panel__input");
+    if (input) input.focus();
   }
-});
+}
+// window capture：比 document capture 更早觸發
+window.addEventListener("keydown", __gra_openStoreSearch, { capture: true });
+// document capture：雙重保險（若某些路徑繞過 window）
+document.addEventListener("keydown", __gra_openStoreSearch, { capture: true });
 
 // ---- Screenshot Module (Free) ---------------------------------------------
 
@@ -6756,12 +6888,41 @@ var GRAScreenshot = (function () {
 
   function captureVisibleTab() {
     return new Promise(function (resolve, reject) {
-      chrome.runtime.sendMessage({ type: "GRA_CAPTURE_VISIBLE_TAB" }, function (res) {
-        if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
-        if (!res || !res.ok) return reject(new Error((res && res.error) || "capture_failed"));
-        resolve(res.dataUrl);
-      });
+      // 偵測 extension context invalidated（通常發生在 extension reload 後頁面未 F5）
+      if (!chrome.runtime || !chrome.runtime.id) {
+        return reject(new Error("context_invalidated"));
+      }
+      try {
+        chrome.runtime.sendMessage({ type: "GRA_CAPTURE_VISIBLE_TAB" }, function (res) {
+          if (chrome.runtime.lastError) {
+            var msg = chrome.runtime.lastError.message || "";
+            if (msg.indexOf("Extension context invalidated") >= 0 ||
+                msg.indexOf("message port closed") >= 0) {
+              return reject(new Error("context_invalidated"));
+            }
+            return reject(new Error(msg));
+          }
+          if (!res || !res.ok) return reject(new Error((res && res.error) || "capture_failed"));
+          resolve(res.dataUrl);
+        });
+      } catch (e) {
+        // sendMessage 在 context invalidated 時會同步 throw
+        if (String(e.message || "").indexOf("Extension context invalidated") >= 0) {
+          return reject(new Error("context_invalidated"));
+        }
+        reject(e);
+      }
     });
+  }
+
+  // 統一的截圖錯誤 toast：若為 context invalidated 提示 F5
+  function showScreenshotError(err) {
+    var msg = String(err && err.message || err);
+    if (msg === "context_invalidated") {
+      showToast("擴充功能剛更新，請按 F5 重新整理頁面後再試");
+    } else {
+      showToast("截圖失敗");
+    }
   }
 
   function loadImage(dataUrl) {
@@ -6909,7 +7070,7 @@ var GRAScreenshot = (function () {
       captureVisibleTab()
         .then(function (dataUrl) { return cropToRect(dataUrl, { x: x, y: y, width: w, height: h }); })
         .then(downloadPng)
-        .catch(function (err) { console.warn("[GRA][screenshot] region error:", err); showToast("截圖失敗"); });
+        .catch(function (err) { console.warn("[GRA][screenshot] region error:", err); showScreenshotError(err); });
     }
 
     function onKeyDown(e) {
@@ -7007,7 +7168,7 @@ var GRAScreenshot = (function () {
       captureVisibleTab()
         .then(function (dataUrl) { return cropToRect(dataUrl, rect); })
         .then(downloadPng)
-        .catch(function (err) { console.warn("[GRA][screenshot] element error:", err); showToast("截圖失敗"); });
+        .catch(function (err) { console.warn("[GRA][screenshot] element error:", err); showScreenshotError(err); });
     }
 
     function onKeyDown(e) {
@@ -7117,7 +7278,7 @@ var GRAScreenshot = (function () {
       captureVisibleTab()
         .then(function (dataUrl) { return cropToRect(dataUrl, scrollRect); })
         .then(downloadPng)
-        .catch(function (err) { console.warn(TAG, err); showToast("截圖失敗"); })
+        .catch(function (err) { console.warn(TAG, err); showScreenshotError(err); })
         .finally(unbindEsc);
       return;
     }
@@ -7167,7 +7328,7 @@ var GRAScreenshot = (function () {
           scrollEl.scrollTop = originalScroll;
           captures = [];
           unbindEsc();
-          showToast("截圖失敗: " + (err.message || err));
+          showScreenshotError(err);
         });
       }, 500);
     }

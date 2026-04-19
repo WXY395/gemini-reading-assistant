@@ -3,15 +3,15 @@
 > The missing reading layer for Gemini.
 
 [![Install](https://img.shields.io/badge/Chrome%20Web%20Store-Install-4285F4?logo=googlechrome&logoColor=white)](https://chromewebstore.google.com/detail/gemini-reading-assistant/pkjhdddhfmiobolikabciojnkigjopkg)
-[![Website](https://img.shields.io/badge/Website-gemini--reading--assistant-f97316)](https://w8964.github.io/gemini-reading-assistant/)
-[![Privacy](https://img.shields.io/badge/Privacy-Policy-blue)](https://w8964.github.io/gemini-reading-assistant/privacy.html)
-[![Support](https://img.shields.io/badge/Support-FAQ-green)](https://w8964.github.io/gemini-reading-assistant/support.html)
+[![Website](https://img.shields.io/badge/Website-gemini--reading--assistant-f97316)](https://wxy395.github.io/gemini-reading-assistant/)
+[![Privacy](https://img.shields.io/badge/Privacy-Policy-blue)](https://wxy395.github.io/gemini-reading-assistant/privacy.html)
+[![Support](https://img.shields.io/badge/Support-FAQ-green)](https://wxy395.github.io/gemini-reading-assistant/support.html)
 [![Pro](https://img.shields.io/badge/Pro-Gumroad-pink)](https://gumroad.com/l/hsiowq)
 [![License](https://img.shields.io/badge/License-MIT-lightgrey)](./LICENSE)
 
 A Chrome Extension that transforms long Gemini conversations into a structured, searchable, and reusable knowledge experience.
 
-🌐 **Live site**: https://w8964.github.io/gemini-reading-assistant/
+🌐 **Live site**: https://wxy395.github.io/gemini-reading-assistant/
 
 ---
 

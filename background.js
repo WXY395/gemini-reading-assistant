@@ -19,8 +19,17 @@ chrome.runtime.onInstalled.addListener((details) => {
 // Message handler (license verification, screenshot capture, etc.)
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // ---- Screenshot: captureVisibleTab (must run in service worker) ----
+  // ⚠️ 必須明確傳入 windowId，不能傳 null：
+  //   service worker 沒有「current window」概念，傳 null Chrome 會拒絕
+  //   ("Either the '<all_urls>' or 'activeTab' permission is required")。
+  //   正確做法是從 sender.tab.windowId 取得發送端所在的 window。
   if (message.type === "GRA_CAPTURE_VISIBLE_TAB") {
-    chrome.tabs.captureVisibleTab(null, { format: "png" }, (dataUrl) => {
+    const windowId = sender && sender.tab && sender.tab.windowId;
+    if (typeof windowId !== "number") {
+      sendResponse({ ok: false, error: "no_window_id_from_sender" });
+      return false;
+    }
+    chrome.tabs.captureVisibleTab(windowId, { format: "png" }, (dataUrl) => {
       if (chrome.runtime.lastError) {
         sendResponse({ ok: false, error: chrome.runtime.lastError.message });
       } else if (!dataUrl) {

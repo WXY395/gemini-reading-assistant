@@ -136,12 +136,12 @@
   <header>
     <div class="eyebrow">Gemini Reading Assistant</div>
     <h1>Privacy Policy</h1>
-    <div class="meta">Effective date: 2026-04-18 · Last updated: 2026-04-18 · Version 3.0.3</div>
+    <div class="meta">Effective date: 2026-04-18 · Last updated: 2026-04-19 · Version 3.0.11</div>
     <nav class="top">
       <a href="./index.html">← Home</a>
       <a href="./support.html">Support</a>
       <a href="./terms.html">Terms</a>
-      <a href="https://github.com/W8964/gemini-reading-assistant">GitHub</a>
+      <a href="https://github.com/WXY395/gemini-reading-assistant">GitHub</a>
     </nav>
   </header>
 
@@ -226,7 +226,11 @@
         </tr>
         <tr>
           <td><code>activeTab</code> <span style="color:var(--accent)">(added in v3.0.3)</span></td>
-          <td>Power the screenshot feature (<code>chrome.tabs.captureVisibleTab</code>). Invoked only when you click a popup button or press <code>Ctrl+Shift+X</code>. Captured images are processed entirely in the browser and downloaded as PNG — never uploaded.</td>
+          <td>Reserved for future user-invoked capture flows. Currently a no-op fallback; screenshot capture actually relies on <code>&lt;all_urls&gt;</code> host permission (see below) because <code>captureVisibleTab</code> is triggered from in-page UI buttons rather than the extension icon.</td>
+        </tr>
+        <tr>
+          <td><code>tabs</code> <span style="color:var(--accent)">(added in v3.0.4)</span></td>
+          <td>Lets the background service worker read the sender tab's <code>windowId</code> so it can forward <code>chrome.tabs.captureVisibleTab(windowId, …)</code> in MV3 (service workers have no "current window" concept). No tab URLs, titles, favicons, or browsing history are read.</td>
         </tr>
         <tr>
           <td><code>https://gemini.google.com/*</code> (host permission)</td>
@@ -235,6 +239,10 @@
         <tr>
           <td><code>https://api.gumroad.com/*</code> (host permission)</td>
           <td>Send the Pro license verification request described in Section 3.</td>
+        </tr>
+        <tr>
+          <td><code>&lt;all_urls&gt;</code> (host permission) <span style="color:var(--accent)">(added in v3.0.11)</span></td>
+          <td><strong>Required by Chrome's <code>captureVisibleTab</code> API — not used to access any website other than Gemini.</strong> Chrome's screenshot API mandates either <code>&lt;all_urls&gt;</code> or <code>activeTab</code>, and specific host permissions (like <code>gemini.google.com/*</code>) are not accepted for this API. Because the Extension's content scripts only match <code>https://gemini.google.com/*</code> (see <code>manifest.json</code> → <code>content_scripts.matches</code>), no code runs on any other site and no data from other sites is read, stored, or transmitted. The sole use of this permission is the screenshot feature on the Gemini tab you have already opened.</td>
         </tr>
       </tbody>
     </table>
@@ -296,8 +304,8 @@
     <h2>11. Contact</h2>
     <p>
       Privacy questions or data-deletion requests: open an issue at
-      <a href="https://github.com/W8964/gemini-reading-assistant/issues">
-      github.com/W8964/gemini-reading-assistant/issues</a>.
+      <a href="https://github.com/WXY395/gemini-reading-assistant/issues">
+      github.com/WXY395/gemini-reading-assistant/issues</a>.
     </p>
   </section>
 
@@ -370,7 +378,11 @@
         </tr>
         <tr>
           <td><code>activeTab</code> <span style="color:var(--accent)">（v3.0.3 新增）</span></td>
-          <td>支援截圖功能（<code>chrome.tabs.captureVisibleTab</code>）。僅在你點擊 popup 按鈕或按 <code>Ctrl+Shift+X</code> 時才會呼叫。截圖圖片完全在瀏覽器內處理後下載為 PNG，<strong>絕不上傳</strong>。</td>
+          <td>保留供未來「使用者明確激活擴充」流程使用。目前為無作用的 fallback；實際截圖依賴下方的 <code>&lt;all_urls&gt;</code>（因為截圖是從頁內 UI 按鈕觸發，而非點擊擴充 icon）。</td>
+        </tr>
+        <tr>
+          <td><code>tabs</code> <span style="color:var(--accent)">（v3.0.4 新增）</span></td>
+          <td>讓 background service worker 可取得發送端分頁的 <code>windowId</code>，以便在 MV3 下正確呼叫 <code>chrome.tabs.captureVisibleTab(windowId, …)</code>（MV3 service worker 無「當前視窗」概念）。本擴充<strong>不讀取任何分頁 URL、標題、圖示或瀏覽歷史</strong>。</td>
         </tr>
         <tr>
           <td><code>https://gemini.google.com/*</code></td>
@@ -379,6 +391,10 @@
         <tr>
           <td><code>https://api.gumroad.com/*</code></td>
           <td>發送第 3 節所述的 Pro 授權驗證請求。</td>
+        </tr>
+        <tr>
+          <td><code>&lt;all_urls&gt;</code> <span style="color:var(--accent)">（v3.0.11 新增）</span></td>
+          <td><strong>此權限僅為 Chrome <code>captureVisibleTab</code> API 的硬性要求，不用於存取 Gemini 以外的任何網站。</strong> Chrome 的截圖 API 強制要求 <code>&lt;all_urls&gt;</code> 或 <code>activeTab</code> 其中之一，具體 host permission（如 <code>gemini.google.com/*</code>）不被此 API 接受。由於本擴充的 content script 僅註冊於 <code>https://gemini.google.com/*</code>（見 <code>manifest.json</code> 的 <code>content_scripts.matches</code>），不會在任何其他網站執行任何程式碼，亦不會讀取、儲存或傳送其他網站的資料。此權限唯一用途是在你已開啟的 Gemini 分頁上擷取螢幕畫面。</td>
         </tr>
       </tbody>
     </table>
@@ -416,13 +432,13 @@
     <h2>11. 聯絡方式</h2>
     <p>
       隱私相關問題或資料刪除請求，請至
-      <a href="https://github.com/W8964/gemini-reading-assistant/issues">
-      github.com/W8964/gemini-reading-assistant/issues</a> 開 issue。
+      <a href="https://github.com/WXY395/gemini-reading-assistant/issues">
+      github.com/WXY395/gemini-reading-assistant/issues</a> 開 issue。
     </p>
   </section>
 
   <footer>
-    © 2026 WXY395 · <a href="https://github.com/W8964/gemini-reading-assistant">Source on GitHub</a> · MIT License
+    © 2026 WXY395 · <a href="https://github.com/WXY395/gemini-reading-assistant">Source on GitHub</a> · MIT License
   </footer>
 </div>
 </body>

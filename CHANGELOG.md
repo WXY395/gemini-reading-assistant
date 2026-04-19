@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.0.11] - 2026-04-19
+
+### Fixed
+- **Full-text search panel positioning with sidebar open** — the search panel was being pushed entirely off-screen (`left: 2048px`, `width: 0`) when Gemini's left sidebar was open. The old selector `[class*='side-nav']` accidentally matched `<chat-app class="... side-nav-open">` (a state flag on Gemini's root element, not the sidebar itself). Replaced with explicit `bard-sidenav` selector plus a sanity check that rejects any element wider than half the viewport.
+- **Full-text search keyboard shortcut (`Ctrl+Shift+S`)** — was inconsistently caught when focus was inside Gemini's left sidebar. Listener now binds at `window` capture phase (earliest event path stage), uses `e.code === "KeyS"` instead of `e.key` (IME can make `e.key` read `"Process"`), and calls `stopImmediatePropagation()`.
+- **IME input in search box** — typing Zhuyin/Pinyin no longer causes the candidate window to freeze or disappear. The `input` event now gates on native `InputEvent.isComposing` instead of a custom flag. The custom flag was unreliable because Gemini's capture-phase listeners could swallow `compositionend` and leave the flag stuck at `true`, silently dropping all subsequent keystrokes.
+- **Screenshot capture in MV3 service worker** — `chrome.tabs.captureVisibleTab(null, …)` was failing because MV3 service workers have no "current window" concept. Background handler now reads `sender.tab.windowId` from the incoming message and passes it explicitly.
+- **Screenshot "Extension context invalidated" handling** — after an extension reload but before the page is refreshed, the orphaned content script would throw an unhelpful error. The capture helper now detects this case and shows a clear toast: "擴充功能剛更新，請按 F5 重新整理頁面後再試".
+
+### Added
+- `<all_urls>` host permission — required by `chrome.tabs.captureVisibleTab`, which mandates either `<all_urls>` or `activeTab` and does not accept specific host permissions. The extension's content scripts still match only `https://gemini.google.com/*`, so no code runs on any other site. See `privacy.html` §4 for the full disclosure.
+
 ## [3.0.3] - 2026-04-18
 
 Initial Chrome Web Store submission of the v3.0.2 feature set. The
