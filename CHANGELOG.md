@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.0.12] - 2026-04-23
+
+### Removed
+- **`tabs` permission** — removed from `manifest.json` to comply with Chrome Web Store's "Purple Potassium" minimum-permission rule. The background service worker only reads `sender.tab.windowId` (a non-sensitive numeric property that requires **no** permission) to forward `chrome.tabs.captureVisibleTab(windowId, …)`. The `tabs` permission is only needed to read sensitive tab properties (`url`, `pendingUrl`, `title`, `favIconUrl`), none of which this extension reads. Permissions declared in `manifest.json` are now only `storage` + `activeTab`. No functional change.
+
+### Changed
+- `privacy.html` §4 permission table (EN + zh-TW) — removed the `tabs` row to match the updated manifest.
+
 ## [3.0.11] - 2026-04-19
 
 ### Fixed

@@ -229,10 +229,6 @@
           <td>Reserved for future user-invoked capture flows. Currently a no-op fallback; screenshot capture actually relies on <code>&lt;all_urls&gt;</code> host permission (see below) because <code>captureVisibleTab</code> is triggered from in-page UI buttons rather than the extension icon.</td>
         </tr>
         <tr>
-          <td><code>tabs</code> <span style="color:var(--accent)">(added in v3.0.4)</span></td>
-          <td>Lets the background service worker read the sender tab's <code>windowId</code> so it can forward <code>chrome.tabs.captureVisibleTab(windowId, …)</code> in MV3 (service workers have no "current window" concept). No tab URLs, titles, favicons, or browsing history are read.</td>
-        </tr>
-        <tr>
           <td><code>https://gemini.google.com/*</code> (host permission)</td>
           <td>Inject the reading layer on Gemini pages. The Extension reads visible DOM text only; it does not intercept Gemini's internal APIs.</td>
         </tr>
@@ -379,10 +375,6 @@
         <tr>
           <td><code>activeTab</code> <span style="color:var(--accent)">（v3.0.3 新增）</span></td>
           <td>保留供未來「使用者明確激活擴充」流程使用。目前為無作用的 fallback；實際截圖依賴下方的 <code>&lt;all_urls&gt;</code>（因為截圖是從頁內 UI 按鈕觸發，而非點擊擴充 icon）。</td>
-        </tr>
-        <tr>
-          <td><code>tabs</code> <span style="color:var(--accent)">（v3.0.4 新增）</span></td>
-          <td>讓 background service worker 可取得發送端分頁的 <code>windowId</code>，以便在 MV3 下正確呼叫 <code>chrome.tabs.captureVisibleTab(windowId, …)</code>（MV3 service worker 無「當前視窗」概念）。本擴充<strong>不讀取任何分頁 URL、標題、圖示或瀏覽歷史</strong>。</td>
         </tr>
         <tr>
           <td><code>https://gemini.google.com/*</code></td>
